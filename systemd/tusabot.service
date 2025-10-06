@@ -1,0 +1,16 @@
+[Unit]
+Description=TusaBot Telegram Bot
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tusabot
+Environment="PATH=/opt/tusabot/venv/bin"
+EnvironmentFile=/opt/tusabot/.env
+ExecStart=/opt/tusabot/venv/bin/python /opt/tusabot/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

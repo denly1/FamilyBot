@@ -1,0 +1,16 @@
+[Unit]
+Description=TusaBot API Service
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tusabot
+Environment="PATH=/opt/tusabot/venv/bin"
+EnvironmentFile=/opt/tusabot/.env
+ExecStart=/opt/tusabot/venv/bin/uvicorn api:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
