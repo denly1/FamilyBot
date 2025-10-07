@@ -121,15 +121,11 @@ function App() {
               {/* Фото афиши */}
               <div className="relative rounded-3xl overflow-hidden shadow-2xl mb-6">
                 <img
-                  src={
-                    (currentPoster as any).photo_url?.startsWith('/posters/')
-                      ? (currentPoster as any).photo_url
-                      : `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}${(currentPoster as any).photo_url || `/photo/${currentPoster.file_id}`}`
-                  }
+                  src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}${(currentPoster as any).photo_url || `/photo/${currentPoster.file_id}`}`}
                   alt="Афиша"
                   className="w-full h-auto object-cover"
                   onError={(e) => {
-                    console.error('Failed to load image:', e);
+                    console.error('Failed to load image:', (currentPoster as any).photo_url, currentPoster.file_id);
                     // Если не удалось загрузить, показываем заглушку
                     e.currentTarget.src = '/фон.jpg';
                   }}

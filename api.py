@@ -149,17 +149,26 @@ async def get_posters():
             posters = []
             for row in rows:
                 file_id = row['file_id']
-                is_local_file = file_id.startswith('/posters/')
+                # Проверяем, является ли file_id локальным путем к файлу
+                is_local_file = file_id.startswith('/posters/') or file_id.startswith('posters/')
                 
                 caption = row['caption'] or ""
                 lines = caption.split('\n', 1)
                 title = lines[0] if lines else "Мероприятие"
                 subtitle = lines[1] if len(lines) > 1 else ""
                 
+                # Формируем URL для фото
+                if is_local_file:
+                    # Убедимся что путь начинается с /
+                    photo_url = file_id if file_id.startswith('/') else f'/{file_id}'
+                else:
+                    # Это Telegram file_id, используем прокси
+                    photo_url = f"/photo/{file_id}"
+                
                 posters.append({
                     "id": row['id'],
                     "file_id": file_id,
-                    "photo_url": file_id if is_local_file else f"/photo/{file_id}",
+                    "photo_url": photo_url,
                     "caption": caption,
                     "title": title,
                     "subtitle": subtitle,
@@ -203,12 +212,18 @@ async def get_latest_poster():
             
             # file_id теперь может быть путем к файлу (/posters/poster_123.jpg) или Telegram file_id
             file_id = row['file_id']
-            is_local_file = file_id.startswith('/posters/')
+            is_local_file = file_id.startswith('/posters/') or file_id.startswith('posters/')
+            
+            # Формируем URL для фото
+            if is_local_file:
+                photo_url = file_id if file_id.startswith('/') else f'/{file_id}'
+            else:
+                photo_url = f"/photo/{file_id}"
             
             return {
                 "id": row['id'],
                 "file_id": file_id,
-                "photo_url": file_id if is_local_file else f"/photo/{file_id}",  # Прямой путь или через API
+                "photo_url": photo_url,
                 "caption": caption,
                 "title": title,
                 "subtitle": subtitle,
