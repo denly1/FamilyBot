@@ -29,6 +29,9 @@ wheels/
 .env.local
 .env.*.local
 
+# ВАЖНО: .env.production должен быть в репозитории для production билда
+!project/.env.production
+
 # Bot persistence
 bot_persistence.pkl
 
