@@ -50,16 +50,16 @@ function App() {
     const distance = touchStart - touchEnd;
     const isLeftSwipe = distance > 50;
     const isRightSwipe = distance < -50;
-
-    // Свайп влево - к более старым афишам (индекс уменьшается)
-    if (isLeftSwipe && currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    }
-    // Свайп вправо - к более новым афишам (индекс увеличивается)
-    if (isRightSwipe && currentIndex < posters.length - 1) {
+  
+    // Свайп влево - к следующей (более новой)  
+    if (isLeftSwipe && currentIndex < posters.length - 1) {
       setCurrentIndex(currentIndex + 1);
     }
-
+    // Свайп вправо - к предыдущей (более старой)
+    if (isRightSwipe && currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  
     setTouchStart(0);
     setTouchEnd(0);
   };
