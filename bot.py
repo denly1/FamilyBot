@@ -920,33 +920,72 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await show_main_menu(update, context)
         
         elif data.startswith("delete_poster:"):
+            # Старый код для обратной совместимости - перенаправляем на новую логику
+            await query.answer("Используйте меню админ-панели для удаления афиш")
+            await admin_panel(update, context)
+        
+        elif data.startswith("confirm_delete:"):
+            # Подтверждение удаления конкретной афиши
             try:
-                poster_index = int(data.split(":", 1)[1])
-                all_posters = context.bot_data.get("all_posters", [])
+                poster_id = int(data.split(":", 1)[1])
+                pool = get_db_pool(context)
                 
-                if 0 <= poster_index < len(all_posters):
-                    deleted_poster = all_posters.pop(poster_index)
-                    context.bot_data["all_posters"] = all_posters
-                    
-                    # Если удаленная афиша была текущей, обновляем текущую
-                    current_poster = context.bot_data.get("poster")
-                    if current_poster == deleted_poster:
-                        if all_posters:
-                            context.bot_data["poster"] = all_posters[-1]
-                        else:
-                            context.bot_data.pop("poster", None)
-                    
-                    caption = deleted_poster.get("caption", "Без описания")
-                    if len(caption) > 50:
-                        caption = caption[:50] + "..."
-                    
-                    await query.edit_message_text(
-                        f"✅ Афиша удалена: {caption}\n\nОсталось афиш: {len(all_posters)}"
-                    )
-                else:
-                    await query.edit_message_text("❌ Неверный номер афиши")
-            except (ValueError, IndexError):
-                await query.edit_message_text("❌ Ошибка при удалении афиши")
+                if not pool:
+                    await query.edit_message_text("❌ База данных недоступна")
+                    return
+                
+                # Получаем афишу для удаления
+                poster = await get_poster_by_id(pool, poster_id)
+                if not poster:
+                    await query.edit_message_text("❌ Афиша не найдена")
+                    return
+                
+                # Удаляем фото из папки project/public/posters/
+                file_id = poster.get("file_id", "")
+                if file_id.startswith("/posters/") or file_id.startswith("posters/"):
+                    try:
+                        file_path = Path(__file__).parent / "project" / "public" / file_id.lstrip("/")
+                        if file_path.exists():
+                            file_path.unlink()
+                            logger.info(f"Deleted photo file: {file_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete photo file: {e}")
+                
+                # Удаляем из БД
+                try:
+                    await db_delete_poster(pool, poster_id)
+                    logger.info(f"Deleted poster from DB: {poster_id}")
+                except Exception as e:
+                    logger.error(f"Failed to delete poster from DB: {e}")
+                    await query.edit_message_text(f"❌ Ошибка удаления из БД: {e}")
+                    return
+                
+                # Обновляем локальный кэш
+                all_posters = context.bot_data.get("all_posters", [])
+                context.bot_data["all_posters"] = [p for p in all_posters if p.get("id") != poster_id]
+                
+                current_poster = context.bot_data.get("poster")
+                if current_poster and current_poster.get("id") == poster_id:
+                    # Загружаем новую текущую афишу из БД
+                    active_posters = await get_active_posters(pool)
+                    if active_posters:
+                        context.bot_data["poster"] = active_posters[-1]
+                        context.bot_data["all_posters"] = active_posters
+                    else:
+                        context.bot_data.pop("poster", None)
+                        context.bot_data["all_posters"] = []
+                
+                caption = poster.get("caption", "Без описания")[:50]
+                remaining = len(context.bot_data.get("all_posters", []))
+                
+                await query.edit_message_text(
+                    f"✅ **Афиша удалена:**\n{caption}\n\n"
+                    f"Осталось активных афиш: {remaining}",
+                    parse_mode="Markdown"
+                )
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error deleting poster: {e}")
+                await query.edit_message_text(f"❌ Ошибка при удалении афиши: {e}")
         
         elif data == "cancel_delete":
             await query.edit_message_text("❌ Удаление отменено")
@@ -1020,43 +1059,42 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await query.edit_message_text("Пришлите ссылку для кнопки «Купить билет»")
             
             elif sub == "delete_poster":
-                # Удаляем текущую афишу
-                current_poster = context.bot_data.pop("poster", None)
-                if current_poster:
-                    # Удаляем фото из папки project/public/posters/
-                    photo_path = current_poster.get("photo_path")
-                    if photo_path and photo_path.startswith("/posters/"):
-                        try:
-                            file_path = Path(__file__).parent / "project" / "public" / photo_path.lstrip("/")
-                            if file_path.exists():
-                                file_path.unlink()
-                                logger.info(f"Deleted photo file: {file_path}")
-                        except Exception as e:
-                            logger.error(f"Failed to delete photo file: {e}")
-                    
-                    # Удаляем из БД
-                    pool = get_db_pool(context)
-                    if pool and current_poster.get("id"):
-                        try:
-                            await db_delete_poster(pool, current_poster["id"])
-                            logger.info(f"Deleted poster from DB: {current_poster['id']}")
-                        except Exception as e:
-                            logger.error(f"Failed to delete poster from DB: {e}")
-                    
-                    # Удаляем из списка всех афиш
-                    all_posters = context.bot_data.get("all_posters", [])
-                    if current_poster in all_posters:
-                        all_posters.remove(current_poster)
-                        context.bot_data["all_posters"] = all_posters
-                    
-                    # Если есть другие афиши, делаем последнюю текущей
-                    if all_posters:
-                        context.bot_data["poster"] = all_posters[-1]
-                        await query.edit_message_text(f"Афиша удалена ✅\n\nОсталось афиш: {len(all_posters)}")
-                    else:
-                        await query.edit_message_text("Афиша удалена ✅\n\nАфиш больше нет.")
+                # Показываем список афиш для удаления
+                pool = get_db_pool(context)
+                if pool:
+                    try:
+                        active_posters = await get_active_posters(pool)
+                        if not active_posters:
+                            await query.edit_message_text("❌ Нет активных афиш для удаления")
+                            return
+                        
+                        # Создаём кнопки для каждой афиши
+                        buttons = []
+                        for poster in active_posters:
+                            caption = poster.get("caption", "Без описания")[:50]
+                            if len(poster.get("caption", "")) > 50:
+                                caption += "..."
+                            created = poster.get("created_at", "")
+                            if isinstance(created, str):
+                                created = created[:10]  # Только дата
+                            
+                            button_text = f"🗑 {caption} ({created})"
+                            buttons.append([InlineKeyboardButton(button_text, callback_data=f"confirm_delete:{poster['id']}")])
+                        
+                        # Кнопка отмены
+                        buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="admin:back_to_panel")])
+                        
+                        await query.edit_message_text(
+                            "🗑 **Выберите афишу для удаления:**\n\n"
+                            f"Всего активных афиш: {len(active_posters)}",
+                            reply_markup=InlineKeyboardMarkup(buttons),
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to list posters for deletion: {e}")
+                        await query.edit_message_text(f"❌ Ошибка загрузки афиш: {e}")
                 else:
-                    await query.edit_message_text("Нет афиши для удаления ❌")
+                    await query.edit_message_text("❌ База данных недоступна")
             
             elif sub == "broadcast_text":
                 context.user_data["awaiting_broadcast_text"] = True

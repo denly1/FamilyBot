@@ -16,9 +16,20 @@ function App() {
 
   async function fetchPosters() {
     console.log('Fetching posters from API...');
+    console.log('API URL:', import.meta.env.VITE_API_URL || 'http://localhost:8000');
     try {
       const data = await getPosters();
       console.log('API response:', data);
+      
+      // Логируем каждую афишу для отладки
+      data.forEach((poster, index) => {
+        console.log(`Poster ${index}:`, {
+          id: poster.id,
+          file_id: poster.file_id,
+          photo_url: (poster as any).photo_url,
+          caption: poster.caption?.substring(0, 30)
+        });
+      });
       
       setPosters(data);
       // Показываем последнюю афишу (самую новую)
@@ -121,11 +132,24 @@ function App() {
               {/* Фото афиши */}
               <div className="relative rounded-3xl overflow-hidden shadow-2xl mb-6">
                 <img
-                  src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}${(currentPoster as any).photo_url || `/photo/${currentPoster.file_id}`}`}
+                  src={(() => {
+                    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                    const photoUrl = (currentPoster as any).photo_url || `/photo/${currentPoster.file_id}`;
+                    const fullUrl = `${apiUrl}${photoUrl}`;
+                    console.log('Loading image:', fullUrl);
+                    return fullUrl;
+                  })()}
                   alt="Афиша"
                   className="w-full h-auto object-cover"
                   onError={(e) => {
-                    console.error('Failed to load image:', (currentPoster as any).photo_url, currentPoster.file_id);
+                    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                    const photoUrl = (currentPoster as any).photo_url;
+                    console.error('Failed to load image:', {
+                      apiUrl,
+                      photoUrl,
+                      file_id: currentPoster.file_id,
+                      fullUrl: `${apiUrl}${photoUrl}`
+                    });
                     // Если не удалось загрузить, показываем заглушку
                     e.currentTarget.src = '/фон.jpg';
                   }}
