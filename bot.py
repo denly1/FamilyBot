@@ -1665,10 +1665,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 
                 report = f"🔍 **Проверка подписок для {username_safe}**\n\n"
                 report += f"👤 Telegram ID: `{target_user_id}`\n\n"
-                report += "📺 **Каналы и чат:**\n"
-                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(WHAT\\? PARTY\\?\\)\n"
-                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(THE FAMILY\\)\n"
-                report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests 💬\\)\n\n"
+                report += "📺 **Telegram каналы:**\n"
+                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(Largent MSK\\)\n"
+                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(IDN Records\\)\n\n"
+                report += "💬 **Telegram чат:**\n"
+                report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests\\)\n"
                 
                 all_ok = tg1_ok and tg2_ok and chat_ok
                 report += f"\n{'🎉 **Все подписки активны\\!**' if all_ok else '⚠️ **Не все подписки активны**'}"
@@ -1881,7 +1882,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def build_app() -> Application:
     """Build and configure the Application"""
     ensure_data_dir()
-    persistence = PicklePersistence(filepath=str(PERSISTENCE_FILE))
+    # ВРЕМЕННО отключаем persistence для тестирования регистрации
+    # persistence = PicklePersistence(filepath=str(PERSISTENCE_FILE))
+    persistence = None
     
     # Create request with timeout and proxy support
     request = None
