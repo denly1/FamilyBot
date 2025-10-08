@@ -32,9 +32,9 @@ function App() {
       });
       
       setPosters(data);
-      // Показываем последнюю афишу (самую новую)
+      // Показываем первую афишу (самую новую, т.к. ORDER BY created_at DESC)
       if (data.length > 0) {
-        setCurrentIndex(data.length - 1);
+        setCurrentIndex(0);
       }
       console.log('Active posters set:', data);
     } catch (err) {
@@ -76,8 +76,8 @@ function App() {
   };
 
   const currentPoster = posters[currentIndex] || null;
-  // Последняя афиша (самая новая) для кнопки билета
-  const latestPoster = posters.length > 0 ? posters[posters.length - 1] : null;
+  // Последняя афиша (самая новая) для кнопки билета - первая в массиве т.к. ORDER BY created_at DESC
+  const latestPoster = posters.length > 0 ? posters[0] : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0b1220] via-[#1a1640] to-[#2b0f4f] text-white">

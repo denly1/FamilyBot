@@ -688,9 +688,33 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await show_main_menu(update, context)
         
         elif data.startswith("delete_poster:"):
-            # Старый код для обратной совместимости - перенаправляем на новую логику
-            await query.answer("Используйте меню админ-панели для удаления афиш")
-            await admin_panel(update, context)
+            # Удаление афиши по индексу из главного меню
+            try:
+                poster_index = int(data.split(":", 1)[1])
+                all_posters = context.bot_data.get("all_posters", [])
+                
+                if poster_index < 0 or poster_index >= len(all_posters):
+                    await query.answer("❌ Афиша не найдена")
+                    return
+                
+                poster = all_posters[poster_index]
+                poster_id = poster.get("id")
+                
+                if not poster_id:
+                    await query.answer("❌ ID афиши не найден")
+                    return
+                
+                # Подтверждение удаления
+                await query.edit_message_caption(
+                    caption=f"❓ Удалить эту афишу?\n\n{poster.get('caption', '')[:100]}...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete:{poster_id}")],
+                        [InlineKeyboardButton("❌ Отмена", callback_data="back_to_menu")]
+                    ])
+                )
+            except Exception as e:
+                logger.error(f"Error in delete_poster handler: {e}")
+                await query.answer(f"❌ Ошибка: {e}")
         
         elif data.startswith("confirm_delete:"):
             # Подтверждение удаления конкретной афиши
@@ -866,7 +890,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             elif sub == "broadcast_text":
                 context.user_data["awaiting_broadcast_text"] = True
-                await query.edit_message_text("Пришлите текст рассылки одним сообщением")
+                await query.edit_message_text(
+                    "📢 **Рассылка всем пользователям**\n\n"
+                    "Вы можете отправить:\n"
+                    "• 📝 Просто текст\n"
+                    "• 🖼 Только фото\n"
+                    "• 🖼📝 Фото с текстом (в caption)\n\n"
+                    "Отправьте сообщение следующим сообщением:",
+                    parse_mode="Markdown"
+                )
             
             elif sub == "stats":
                 count = len(get_known_users(context))
@@ -1649,15 +1681,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             
         if context.user_data.get("awaiting_broadcast_text"):
             context.user_data["awaiting_broadcast_text"] = False
-            text = update.message.text
+            
+            # Проверяем что отправлено: текст, фото или фото с текстом
+            text_content = update.message.text
+            
+            success_count = 0
+            failed_count = 0
+            
             for uid in list(get_known_users(context)):
                 try:
-                    await context.bot.send_message(uid, text)
+                    await context.bot.send_message(uid, text_content)
+                    success_count += 1
                 except Forbidden:
                     logger.info("Cannot message user %s (blocked)", uid)
+                    failed_count += 1
                 except Exception as e:
                     logger.warning("Broadcast text failed to %s: %s", uid, e)
-            await update.message.reply_text("Текстовая рассылка отправлена ✅")
+                    failed_count += 1
+            
+            await update.message.reply_text(
+                f"✅ Рассылка завершена!\n"
+                f"• Успешно: {success_count}\n"
+                f"• Ошибок: {failed_count}"
+            )
             return
         
         # Poster draft: expecting caption or link
@@ -1704,6 +1750,34 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Проверяем рассылку фото
+    if context.user_data.get("awaiting_broadcast_text"):
+        context.user_data["awaiting_broadcast_text"] = False
+        
+        photo = update.message.photo[-1].file_id
+        caption = update.message.caption or ""
+        
+        success_count = 0
+        failed_count = 0
+        
+        for uid in list(get_known_users(context)):
+            try:
+                await context.bot.send_photo(uid, photo=photo, caption=caption)
+                success_count += 1
+            except Forbidden:
+                logger.info("Cannot message user %s (blocked)", uid)
+                failed_count += 1
+            except Exception as e:
+                logger.warning("Broadcast photo failed to %s: %s", uid, e)
+                failed_count += 1
+        
+        await update.message.reply_text(
+            f"✅ Рассылка завершена!\n"
+            f"• Успешно: {success_count}\n"
+            f"• Ошибок: {failed_count}"
+        )
+        return
+    
     # Poster draft: expecting photo at step 'photo'
     draft = context.user_data.get("poster_draft")
     if draft and draft.get("step") == "photo" and update.message.photo:
