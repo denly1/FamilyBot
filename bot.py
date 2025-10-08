@@ -46,8 +46,8 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from db import (
-    create_pool, init_schema, upsert_user, set_vk_id, get_user, get_user_by_username, 
-    get_all_user_ids, load_user_vk_data, get_user_stats, export_users_to_excel,
+    create_pool, init_schema, upsert_user, get_user, get_user_by_username, 
+    get_all_user_ids, get_user_stats, export_users_to_excel,
     create_poster, get_active_posters, get_latest_poster, get_poster_by_id,
     deactivate_poster, delete_poster as db_delete_poster, update_poster_ticket_url,
     mark_attendance, get_user_attendances, get_poster_attendances, get_attendance_stats
@@ -92,8 +92,9 @@ ADMIN_USER_ID_2_STR = _get_env("ADMIN_USER_ID_2", "")
 ADMIN_USER_ID_2 = int(ADMIN_USER_ID_2_STR) if ADMIN_USER_ID_2_STR.isdigit() else 0
 ADMIN_USER_ID_3_STR = _get_env("ADMIN_USER_ID_3", "")
 ADMIN_USER_ID_3 = int(ADMIN_USER_ID_3_STR) if ADMIN_USER_ID_3_STR.isdigit() else 0
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@largentmsk")
-CHANNEL_USERNAME_2 = os.getenv("CHANNEL_USERNAME_2", "@idnrecords")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@whatpartyy")
+CHANNEL_USERNAME_2 = os.getenv("CHANNEL_USERNAME_2", "@thefamilymsk")
+CHAT_USERNAME = os.getenv("CHAT_USERNAME", "@familyychaat")
 
 def _normalize_channel(value: str):
     v = (value or "").strip()
@@ -111,20 +112,11 @@ def _normalize_channel(value: str):
 
 CHANNEL_ID = _normalize_channel(CHANNEL_USERNAME)
 CHANNEL_ID_2 = _normalize_channel(CHANNEL_USERNAME_2)
+CHAT_ID = _normalize_channel(CHAT_USERNAME)
 WEEKLY_DAY = int(_get_env("WEEKLY_DAY", "4"))  # 0=Mon..6=Sun
 WEEKLY_HOUR_LOCAL = int(_get_env("WEEKLY_HOUR", "12"))
 WEEKLY_MINUTE = int(_get_env("WEEKLY_MINUTE", "0"))
-# VK integration
-VK_TOKEN = _get_env("VK_TOKEN", "")
-VK_ENABLED = bool(VK_TOKEN)
-def _normalize_vk_group_domain(v: str) -> str:
-    v = v.strip()
-    for prefix in ("https://vk.com/", "http://vk.com/", "vk.com/"):
-        if v.lower().startswith(prefix):
-            v = v[len(prefix):]
-            break
-    return v.strip("/") or "largent.tusa"
-VK_GROUP_DOMAIN = os.getenv("VK_GROUP_DOMAIN", "largent.tusa")
+# VK integration removed - only Telegram channels now
 # Proxy settings
 PROXY_URL = _get_env("PROXY_URL", "")
 # Convert MSK (UTC+3) local hour to UTC for job queue
@@ -159,30 +151,38 @@ def previous_week_key(now: datetime) -> str:
     return week_key_for_date(last_week_date)
 
 
-async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, bool]:
-    """Проверить подписку пользователя на оба Telegram канала
+async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, bool, bool]:
+    """Проверить подписку пользователя на каналы и чат
     
     Returns:
-        tuple[bool, bool]: (подписан на первый канал, подписан на второй канал)
+        tuple[bool, bool, bool]: (канал 1, канал 2, чат)
     """
     channel1_ok = False
     channel2_ok = False
+    chat_ok = False
     
     # Проверяем первый канал
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
         channel1_ok = member.status in ["member", "administrator", "creator"]
     except Exception as e:
-        logger.warning("Failed to check TG subscription for user %s on %s: %s", user_id, CHANNEL_USERNAME, e)
+        logger.warning("Failed to check subscription for user %s on %s: %s", user_id, CHANNEL_USERNAME, e)
     
     # Проверяем второй канал
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME_2, user_id)
         channel2_ok = member.status in ["member", "administrator", "creator"]
     except Exception as e:
-        logger.warning("Failed to check TG subscription for user %s on %s: %s", user_id, CHANNEL_USERNAME_2, e)
+        logger.warning("Failed to check subscription for user %s on %s: %s", user_id, CHANNEL_USERNAME_2, e)
     
-    return channel1_ok, channel2_ok
+    # Проверяем чат/группу
+    try:
+        member = await context.bot.get_chat_member(CHAT_USERNAME, user_id)
+        chat_ok = member.status in ["member", "administrator", "creator"]
+    except Exception as e:
+        logger.warning("Failed to check chat membership for user %s on %s: %s", user_id, CHAT_USERNAME, e)
+    
+    return channel1_ok, channel2_ok, chat_ok
 
 
 async def get_bot_channel_status(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -228,10 +228,6 @@ async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: in
             context.user_data["gender"] = user_in_db.get("gender")
             context.user_data["age"] = user_in_db.get("age")
             
-            # Загружаем VK ID если есть
-            if user_in_db.get("vk_id"):
-                context.user_data["vk_id"] = user_in_db.get("vk_id")
-            
             # Проверяем полноту регистрации - нужны минимум имя, пол и возраст
             has_required_data = (
                 user_in_db.get("name") and 
@@ -253,7 +249,6 @@ async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: in
             context.user_data.pop("name", None)
             context.user_data.pop("gender", None)
             context.user_data.pop("age", None)
-            context.user_data.pop("vk_id", None)
             logger.info("User %s not found in DB - reset registration", user_id)
     except Exception as e:
         logger.warning("Failed to load user data from DB for user %s: %s", user_id, e)
@@ -297,153 +292,13 @@ def extract_vk_id(text: str) -> Optional[str]:
     return None
 
 
-async def vk_is_member(vk_user: str) -> Optional[bool]:
-    if not VK_TOKEN:
-        return None  # cannot verify
-    # groups.isMember accepts group_id (domain) and user_id
-    params = {
-        "group_id": VK_GROUP_DOMAIN,
-        "user_id": vk_user,
-        "access_token": VK_TOKEN,
-        "v": "5.131",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get("https://api.vk.com/method/groups.isMember", params=params)
-            data = r.json()
-            if "error" in data:
-                logger.warning("VK API error: %s", data["error"])
-                return None
-            resp = data.get("response")
-            if isinstance(resp, dict):
-                return bool(resp.get("member", 0))
-            return bool(resp)
-    except Exception as e:
-        logger.warning("VK check failed: %s", e)
-        return None
+# VK membership check removed
 
 
-async def is_user_subscribed_vk(vk_user_id: str) -> Optional[bool]:
-    """Автопроверка подписки пользователя на VK группу.
-
-    Возвращает:
-      - True/False — если проверка удалась
-      - None — если проверить не удалось (ошибка VK API/сеть)
-    """
-    if not VK_ENABLED or not VK_TOKEN:
-        return None
-
-    try:
-        import aiohttp
-
-        # 1) Получаем numeric group_id по домену
-        async with aiohttp.ClientSession() as session:
-            group_url = (
-                "https://api.vk.com/method/groups.getById"
-                f"?group_id={VK_GROUP_DOMAIN}&access_token={VK_TOKEN}&v=5.131"
-            )
-            async with session.get(group_url) as resp:
-                group_data = await resp.json()
-                if 'error' in group_data:
-                    logger.warning("VK API error getting group info: %s", group_data['error'])
-                    return None
-                group_id = group_data['response'][0]['id']
-
-            # 2) Нормализуем user_id: поддерживаем 'id123', '123', 'durov'
-            raw = (vk_user_id or '').strip()
-            if raw.lower().startswith('id') and raw[2:].isdigit():
-                user_id_numeric = raw[2:]
-            elif raw.isdigit():
-                user_id_numeric = raw
-            else:
-                # resolve screen name -> object_id
-                resolve_url = (
-                    "https://api.vk.com/method/utils.resolveScreenName"
-                    f"?screen_name={raw}&access_token={VK_TOKEN}&v=5.131"
-                )
-                async with session.get(resolve_url) as r2:
-                    rj = await r2.json()
-                    if 'error' in rj or not rj.get('response'):
-                        logger.warning("VK resolveScreenName failed for %s: %s", raw, rj.get('error'))
-                        return None
-                    resp = rj['response']
-                    if resp.get('type') != 'user':
-                        logger.warning("Resolved name is not a user: %s", resp)
-                        return None
-                    user_id_numeric = str(resp.get('object_id'))
-
-            # 3) Проверяем членство
-            check_url = (
-                "https://api.vk.com/method/groups.isMember"
-                f"?group_id={group_id}&user_id={user_id_numeric}&access_token={VK_TOKEN}&v=5.131"
-            )
-            async with session.get(check_url) as resp:
-                data = await resp.json()
-                if 'error' in data:
-                    logger.warning("VK API error checking membership: %s", data['error'])
-                    return None
-                # ответ может быть числом 1/0 или словарем {member: 1}
-                resp_val = data.get('response')
-                if isinstance(resp_val, dict):
-                    return bool(resp_val.get('member', 0))
-                return bool(resp_val)
-
-    except Exception as e:
-        logger.warning("Failed to check VK subscription for %s: %s", vk_user_id, e)
-        return None
+# VK subscription check removed
 
 
-async def broadcast_to_vk(poster_data: dict) -> bool:
-    """Отправить афишу в VK группу largent.tusa"""
-    if not VK_ENABLED or not VK_TOKEN:
-        logger.info("VK broadcast disabled - no token")
-        return False
-    
-    try:
-        import aiohttp
-        
-        # Получаем данные афиши
-        caption = poster_data.get('caption', '')
-        ticket_url = poster_data.get('ticket_url', '')
-        
-        # Формируем текст поста
-        post_text = caption
-        if ticket_url:
-            post_text += f"\n\n🎫 Билеты: {ticket_url}"
-        
-        async with aiohttp.ClientSession() as session:
-            # Получаем ID группы
-            group_url = f"https://api.vk.com/method/groups.getById?group_id={VK_GROUP_DOMAIN}&access_token={VK_TOKEN}&v=5.131"
-            async with session.get(group_url) as resp:
-                group_data = await resp.json()
-                if 'error' in group_data:
-                    logger.error("VK API error getting group info: %s", group_data['error'])
-                    return False
-                
-                group_id = group_data['response'][0]['id']
-            
-            # Отправляем пост на стену группы
-            post_url = f"https://api.vk.com/method/wall.post"
-            post_data = {
-                'owner_id': f'-{group_id}',
-                'message': post_text,
-                'from_group': 1,
-                'access_token': VK_TOKEN,
-                'v': '5.131'
-            }
-            
-            async with session.post(post_url, data=post_data) as resp:
-                result = await resp.json()
-                if 'error' in result:
-                    logger.error("VK API error posting: %s", result['error'])
-                    return False
-                
-                logger.info("Successfully posted to VK group: post_id=%s", result['response']['post_id'])
-                return True
-                
-    except Exception as e:
-        logger.error("Failed to broadcast to VK: %s", e)
-        return False
+# VK broadcast removed
 
 
 # ----------------------
@@ -488,7 +343,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Пользователь уже зарегистрирован - показываем сообщение и кнопку меню
         # Сбрасываем флаг регистрации если он остался
         user_data.pop("registration_step", None)
-        user_data.pop("awaiting_vk", None)
         user_data.pop("awaiting_username_check", None)
         
         kb = [[InlineKeyboardButton("🎉 Перейти в меню", callback_data="back_to_menu")]]
@@ -497,8 +351,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"👤 Ваши данные:\n"
             f"• Имя: {user_data.get('name', 'Не указано')}\n"
             f"• Пол: {'Мужской' if user_data.get('gender') == 'male' else 'Женский' if user_data.get('gender') == 'female' else 'Не указан'}\n"
-            f"• Возраст: {user_data.get('age', 'Не указан')} лет\n"
-            f"• VK профиль: {'Привязан' if user_data.get('vk_id') else 'Не привязан'}\n\n"
+            f"• Возраст: {user_data.get('age', 'Не указан')} лет\n\n"
             "Добро пожаловать обратно! 🥳",
             reply_markup=InlineKeyboardMarkup(kb)
         )
@@ -645,14 +498,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if poster.get("ticket_url"):
         action_buttons.append([InlineKeyboardButton("🎫 Купить билет", url=poster["ticket_url"])])
     
-    # 2. Кнопка привязки/перепривязки VK для всех пользователей
-    if VK_ENABLED:
-        vk_id = context.user_data.get("vk_id")
-        if not vk_id:
-            action_buttons.append([InlineKeyboardButton("🔗 Привязать VK профиль", callback_data="link_vk")])
-        else:
-            action_buttons.append([InlineKeyboardButton("🔄 Перепривязать VK", callback_data="link_vk")])
-    
     # Админские кнопки
     if user and user.id in get_admins(context):
         admin_row = []
@@ -734,11 +579,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await load_user_data_from_db(context, user.id)
 
         if data == "check_all":
-            tg1_ok, tg2_ok = await is_user_subscribed(context, user.id)
-            vk_id = context.user_data.get("vk_id")
-            vk_status = None
-            if VK_ENABLED and vk_id:
-                vk_status = await is_user_subscribed_vk(vk_id)
+            tg1_ok, tg2_ok, chat_ok = await is_user_subscribed(context, user.id)
 
             # Формируем сообщение с простым форматом
             lines = ["🔍 **Статус подписок:**\n"]
@@ -746,48 +587,37 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Первый Telegram канал
             tg1_icon = "✅" if tg1_ok else "❌"
             tg1_url = f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            lines.append(f"{tg1_icon} [Largent MSK]({tg1_url})")
+            lines.append(f"{tg1_icon} [WHAT? PARTY?]({tg1_url})")
             
             # Второй Telegram канал
             tg2_icon = "✅" if tg2_ok else "❌"
             tg2_url = f"https://t.me/{CHANNEL_USERNAME_2.lstrip('@')}"
-            lines.append(f"{tg2_icon} [IDN Records]({tg2_url})")
+            lines.append(f"{tg2_icon} [THE FAMILY]({tg2_url})")
             
-            # VK со ссылкой и статусом
-            if VK_ENABLED:
-                if not vk_id:
-                    lines.append(f"⚠️ [VK группа](https://vk.com/{VK_GROUP_DOMAIN}) - профиль не привязан")
-                elif vk_status is None:
-                    lines.append(f"❓ [VK группа](https://vk.com/{VK_GROUP_DOMAIN}) - не удалось проверить")
-                elif vk_status is True:
-                    lines.append(f"✅ [VK группа](https://vk.com/{VK_GROUP_DOMAIN})")
-                elif vk_status is False:
-                    lines.append(f"❌ [VK группа](https://vk.com/{VK_GROUP_DOMAIN}) - не подписан")
+            # Чат/группа
+            chat_icon = "✅" if chat_ok else "❌"
+            chat_url = f"https://t.me/{CHAT_USERNAME.lstrip('@')}"
+            lines.append(f"{chat_icon} [Family Guests 💬]({chat_url})")
             
-            # Итоговый статус - нужны все подписки
-            all_tg_ok = tg1_ok and tg2_ok
-            if all_tg_ok and (not VK_ENABLED or not vk_id or vk_status):
+            # Итоговый статус - нужны все три
+            all_ok = tg1_ok and tg2_ok and chat_ok
+            if all_ok:
                 lines.append("\n🎉 **Все проверки пройдены!**")
             else:
-                lines.append("\n⚠️ **Требуется подписка для участия**")
+                lines.append("\n⚠️ **Требуется подписка на все каналы и чат**")
             
             text = "\n".join(lines)
             
             # Кнопки действий
             btns = []
             
-            # Кнопки подписки на каналы (если не подписан)
+            # Кнопки подписки (если не подписан)
             if not tg1_ok:
-                btns.append([InlineKeyboardButton("📢 Подписаться на Largent MSK", url=tg1_url)])
+                btns.append([InlineKeyboardButton("📢 Подписаться на WHAT? PARTY?", url=tg1_url)])
             if not tg2_ok:
-                btns.append([InlineKeyboardButton("🎵 Подписаться на IDN Records", url=tg2_url)])
-            
-            # VK привязка - всегда показываем
-            if VK_ENABLED:
-                if not vk_id:
-                    btns.append([InlineKeyboardButton("🔗 Привязать VK профиль", callback_data="link_vk")])
-                else:
-                    btns.append([InlineKeyboardButton("🔄 Перепривязать VK", callback_data="link_vk")])
+                btns.append([InlineKeyboardButton("🎉 Подписаться на THE FAMILY", url=tg2_url)])
+            if not chat_ok:
+                btns.append([InlineKeyboardButton("💬 Вступить в чат Family Guests", url=chat_url)])
             
             btns.append([InlineKeyboardButton("🔄 Перепроверить", callback_data="check_all")])
             btns.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")])
@@ -804,68 +634,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 parse_mode="Markdown"
             )
 
-        elif data == "link_vk":
-            # Запрашиваем VK ID для привязки
-            logger.info("User %s clicked link_vk button", user.id)
-            try:
-                context.user_data["awaiting_vk"] = True
-                kb = [[InlineKeyboardButton("❌ Отмена", callback_data="back_to_menu")]]
-                
-                # Проверяем есть ли уже привязанный VK
-                current_vk = context.user_data.get("vk_id")
-                if current_vk:
-                    text = (
-                        "🔄 Перепривязка VK аккаунта\n\n"
-                        f"Текущий VK ID: {current_vk}\n\n"
-                        "Отправьте новый ID вашего VK аккаунта:\n\n"
-                        "Поддерживаемые форматы:\n"
-                        "• Цифры: 123456789\n"
-                        "• ID: id123456789\n"
-                        "• Никнейм: durov, ivan_petrov\n\n"
-                        "Как найти ID аккаунта:\n"
-                        "1. Откройте свой профиль VK\n"
-                        "2. Скопируйте из адресной строки:\n"
-                        "   • vk.com/durov → отправьте: durov\n"
-                        "   • vk.com/id123456789 → отправьте: 123456789\n\n"
-                        "⚠️ Убедитесь, что подписки в профиле открыты для просмотра"
-                    )
-                else:
-                    text = (
-                        "🔗 Привязка VK аккаунта\n\n"
-                        "Отправьте ID вашего VK аккаунта для проверки подписки:\n\n"
-                        "Поддерживаемые форматы:\n"
-                        "• Цифры: 123456789\n"
-                        "• ID: id123456789\n"
-                        "• Никнейм: durov, ivan_petrov\n\n"
-                        "Как найти ID аккаунта:\n"
-                        "1. Откройте свой профиль VK\n"
-                        "2. Скопируйте из адресной строки:\n"
-                        "   • vk.com/durov → отправьте: durov\n"
-                        "   • vk.com/id123456789 → отправьте: 123456789\n\n"
-                        "⚠️ Убедитесь, что подписки в профиле открыты для просмотра"
-                    )
-                
-                # Удаляем старое сообщение (афишу) и отправляем новое
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(kb)
-                )
-                logger.info("Successfully showed VK link form to user %s", user.id)
-            except Exception as e:
-                logger.error("Failed to show VK link form to user %s: %s", user.id, e)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="❌ Произошла ошибка при открытии формы привязки VK.\n\n"
-                         "Попробуйте еще раз или обратитесь к администратору.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")]])
-                )
-        
         elif data == "show_current_poster":
             # Показать актуальную афишу (последнюю)
             all_posters = context.bot_data.get("all_posters", [])
@@ -1186,7 +954,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         stats = await get_user_stats(pool)
                         text = f"👥 **Статистика пользователей**\n\n"
                         text += f"• Всего пользователей: {stats.get('total_users', 0)}\n"
-                        text += f"• С привязанным VK: {stats.get('users_with_vk', 0)}\n"
                         text += f"• Мужчин: {stats.get('male_users', 0)}\n"
                         text += f"• Женщин: {stats.get('female_users', 0)}\n"
                         text += f"• Зарегистрировано сегодня: {stats.get('today_registrations', 0)}"
@@ -1377,7 +1144,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     status_text += "\n👥 **Пользователи:**\n"
     if stats:
         status_text += f"• Всего: {stats.get('total_users', 0)}\n"
-        status_text += f"• С VK: {stats.get('users_with_vk', 0)}\n"
         status_text += f"• Мужчин: {stats.get('male_users', 0)}\n"
         status_text += f"• Женщин: {stats.get('female_users', 0)}\n"
         status_text += f"• Сегодня: {stats.get('today_registrations', 0)}\n"
@@ -1446,19 +1212,73 @@ async def broadcast_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Рассылка текста (с фото или без) всем пользователям.
+    
+    Использование:
+    - /broadcast_text ваш текст - отправит текст всем
+    - /broadcast_text (в reply на фото) - отправит фото с caption всем
+    - Просто отправьте фото с caption /broadcast_text текст - отправит фото с текстом
+    """
     if not await admin_only(update, context):
         return
-    if not context.args:
-        await update.message.reply_text("Формат: /broadcast_text ваш текст")
-        return
-    text = update.message.text.partition(' ')[2]
+    
+    # Проверяем есть ли фото в сообщении
+    photo = None
+    caption = None
+    
+    if update.message.photo:
+        # Фото отправлено напрямую
+        photo = update.message.photo[-1].file_id
+        # Caption может быть с /broadcast_text или без
+        raw_caption = update.message.caption or ""
+        if raw_caption.startswith("/broadcast_text"):
+            caption = raw_caption.partition(' ')[2].strip()
+        else:
+            caption = raw_caption
+    elif update.message.reply_to_message and update.message.reply_to_message.photo:
+        # Reply на фото
+        photo = update.message.reply_to_message.photo[-1].file_id
+        # Текст из команды или из caption оригинального фото
+        if context.args:
+            caption = update.message.text.partition(' ')[2]
+        else:
+            caption = update.message.reply_to_message.caption or ""
+    else:
+        # Обычный текст без фото
+        if not context.args:
+            await update.message.reply_text(
+                "📢 **Формат рассылки:**\n\n"
+                "**Текст:** /broadcast_text ваш текст\n"
+                "**Фото + текст:** отправьте фото с caption `/broadcast_text текст`\n"
+                "**Или:** reply на фото командой `/broadcast_text текст`",
+                parse_mode="Markdown"
+            )
+            return
+        caption = update.message.text.partition(' ')[2]
+    
+    # Рассылаем
+    success_count = 0
+    failed_count = 0
+    
     for uid in list(get_known_users(context)):
         try:
-            await context.bot.send_message(uid, text)
+            if photo:
+                await context.bot.send_photo(uid, photo=photo, caption=caption)
+            else:
+                await context.bot.send_message(uid, caption)
+            success_count += 1
         except Forbidden:
             logger.info("Cannot message user %s (blocked)", uid)
+            failed_count += 1
         except Exception as e:
-            logger.warning("Broadcast text failed to %s: %s", uid, e)
+            logger.warning("Broadcast failed to %s: %s", uid, e)
+            failed_count += 1
+    
+    await update.message.reply_text(
+        f"✅ Рассылка завершена!\n"
+        f"• Успешно: {success_count}\n"
+        f"• Ошибок: {failed_count}"
+    )
 
 
 # ----------------------
@@ -1629,7 +1449,6 @@ async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT
                         name=name,
                         gender=user_data.get("gender"),
                         age=age,
-                        vk_id=user_data.get("vk_id"),
                         username=user.username,
                     )
                     logger.info("Registration completed for user %s: %s", user.id, name)
@@ -1747,21 +1566,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     )
                     return
                 
-                # Проверяем подписки на оба TG канала
-                tg1_ok, tg2_ok = await is_user_subscribed(context, target_user_id)
-                
-                # Проверяем VK (если есть привязка)
-                pool = get_db_pool(context)
-                vk_id = None
-                vk_status = None
-                if pool:
-                    try:
-                        user_in_db = await get_user(pool, target_user_id)
-                        vk_id = user_in_db.get("vk_id") if user_in_db else None
-                        if vk_id and VK_ENABLED:
-                            vk_status = await is_user_subscribed_vk(vk_id)
-                    except Exception:
-                        pass
+                # Проверяем подписки на каналы и чат
+                tg1_ok, tg2_ok, chat_ok = await is_user_subscribed(context, target_user_id)
                 
                 # Формируем отчет (экранируем специальные символы Markdown)
                 def escape_markdown(text):
@@ -1775,22 +1581,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 
                 report = f"🔍 **Проверка подписок для {username_safe}**\n\n"
                 report += f"👤 Telegram ID: `{target_user_id}`\n\n"
-                report += "📺 **Telegram каналы:**\n"
-                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(Largent MSK\\)\n"
-                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(IDN Records\\)\n\n"
+                report += "📺 **Каналы и чат:**\n"
+                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(WHAT\\? PARTY\\?\\)\n"
+                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(THE FAMILY\\)\n"
+                report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests 💬\\)\n\n"
                 
-                if VK_ENABLED:
-                    report += "🎵 **VK группа:**\n"
-                    if not vk_id:
-                        report += "⚠️ VK профиль не привязан\n"
-                    elif vk_status is None:
-                        report += f"❓ VK ID: {vk_id} \\- не удалось проверить\n"
-                    elif vk_status:
-                        report += f"✅ VK ID: {vk_id}\n"
-                    else:
-                        report += f"❌ VK ID: {vk_id} \\- не подписан\n"
-                
-                all_ok = tg1_ok and tg2_ok and (not VK_ENABLED or vk_status)
+                all_ok = tg1_ok and tg2_ok and chat_ok
                 report += f"\n{'🎉 **Все подписки активны\\!**' if all_ok else '⚠️ **Не все подписки активны**'}"
                 
                 # Кнопки в зависимости от режима
@@ -1898,88 +1694,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     ]),
                 )
                 return
-        if VK_ENABLED and context.user_data.get("awaiting_vk"):
-            context.user_data["awaiting_vk"] = False
-            vk_input = update.message.text.strip()
-            
-            # Проверяем формат: цифры, id123456, или никнейм
-            if not vk_input:
-                kb = [[InlineKeyboardButton("🔗 Попробовать еще раз", callback_data="link_vk")]]
-                await update.message.reply_text(
-                    "❌ **Пустое поле**\n\n"
-                    "Введите ваш VK ID или никнейм",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode="Markdown"
-                )
-                return
-            
-            # Проверяем что это валидный формат VK ID/никнейма
-            is_valid = (
-                vk_input.isdigit() or  # только цифры: 123456789
-                (vk_input.lower().startswith('id') and vk_input[2:].isdigit()) or  # id123456789
-                (len(vk_input) >= 3 and vk_input.replace('_', '').replace('.', '').isalnum())  # никнейм: durov, ivan_petrov
-            )
-            
-            if not is_valid:
-                kb = [[InlineKeyboardButton("🔗 Попробовать еще раз", callback_data="link_vk")]]
-                await update.message.reply_text(
-                    "❌ **Неверный формат VK ID/никнейма**\n\n"
-                    "Поддерживаемые форматы:\n"
-                    "• **Цифры:** 123456789\n"
-                    "• **ID:** id123456789\n"
-                    "• **Никнейм:** durov, ivan_petrov\n\n"
-                    "📍 Найти можно в адресной строке профиля VK",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode="Markdown"
-                )
-                return
-            
-            # Проверяем была ли это перепривязка
-            was_relink = bool(context.user_data.get("vk_id"))
-            
-            vk_id = vk_input
-            context.user_data["vk_id"] = vk_id
-            
-            # Persist VK link to database
-            pool = get_db_pool(context)
-            if pool:
-                try:
-                    await set_vk_id(pool, user.id, vk_id)
-                    # Обновляем кеш
-                    vk_cache = context.bot_data.get("user_vk_cache", {})
-                    vk_cache[user.id] = vk_id
-                    context.bot_data["user_vk_cache"] = vk_cache
-                    logger.info("VK ID %s linked to user %s", vk_id, user.id)
-                except Exception as e:
-                    logger.warning("DB set_vk_id failed: %s", e)
-            
-            # Проверяем подписку сразу после привязки
-            status = await is_user_subscribed_vk(vk_id)
-            
-            kb = [[InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")]]
-            
-            if status is None:
-                action_text = "перепривязан" if was_relink else "привязан"
-                await update.message.reply_text(
-                    f"✅ **VK профиль успешно {action_text}!**",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode="Markdown"
-                )
-            elif status:
-                action_text = "перепривязан" if was_relink else "привязан"
-                await update.message.reply_text(
-                    f"✅ **VK профиль успешно {action_text}!**",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode="Markdown"
-                )
-            else:
-                action_text = "перепривязан" if was_relink else "привязан"
-                await update.message.reply_text(
-                    f"✅ **VK профиль успешно {action_text}!**",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode="Markdown"
-                )
-            return
+        # VK handling removed - only Telegram channels now
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2063,10 +1778,6 @@ def build_app() -> Application:
             user_ids = await get_all_user_ids(pool)
             app.bot_data["known_users"] = set(user_ids)
             
-            # Загружаем VK данные для кеширования
-            vk_data = await load_user_vk_data(pool)
-            app.bot_data["user_vk_cache"] = vk_data
-            
             # Загружаем активные афиши из БД
             try:
                 posters_from_db = await get_active_posters(pool)
@@ -2144,6 +1855,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("app", show_web_app))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("id", show_id))
+    app.add_handler(CommandHandler("broadcast_text", broadcast_text))
+    app.add_handler(CommandHandler("broadcast_now", broadcast_now))
     app.add_handler(CallbackQueryHandler(handle_buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
