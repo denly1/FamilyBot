@@ -213,12 +213,21 @@ def get_db_pool(context: ContextTypes.DEFAULT_TYPE):
 
 async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Загружает данные пользователя из БД в context.user_data"""
+    logger.info("=== LOAD_USER_DATA_FROM_DB START ===")
+    logger.info("Loading data for user_id: %s", user_id)
+    
     pool = get_db_pool(context)
+    logger.info("DB pool exists: %s", pool is not None)
+    
     if not pool:
         logger.warning("No DB pool available for user %s", user_id)
+        logger.info("Setting registered=False due to no DB pool")
+        context.user_data["registered"] = False
+        logger.info("=== LOAD_USER_DATA_FROM_DB END (no pool) ===")
         return
     
     try:
+        logger.info("Calling get_user from DB...")
         user_in_db = await get_user(pool, user_id)
         logger.info("DB query result for user %s: %s", user_id, user_in_db)
         
@@ -245,13 +254,25 @@ async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: in
                            user_id, user_in_db.get("name"), user_in_db.get("gender"), user_in_db.get("age"))
         else:
             # Пользователя нет в БД - сбрасываем регистрацию
+            logger.info("User NOT found in DB - clearing all registration data")
             context.user_data["registered"] = False
             context.user_data.pop("name", None)
             context.user_data.pop("gender", None)
             context.user_data.pop("age", None)
+            context.user_data.pop("registration_step", None)
             logger.info("User %s not found in DB - reset registration", user_id)
+            logger.info("Final user_data after reset: registered=%s, name=%s, gender=%s, age=%s", 
+                       context.user_data.get("registered"), 
+                       context.user_data.get("name"),
+                       context.user_data.get("gender"),
+                       context.user_data.get("age"))
+        
+        logger.info("=== LOAD_USER_DATA_FROM_DB END ===")
     except Exception as e:
         logger.warning("Failed to load user data from DB for user %s: %s", user_id, e)
+        logger.info("Setting registered=False due to DB error")
+        context.user_data["registered"] = False
+        logger.info("=== LOAD_USER_DATA_FROM_DB END (error) ===")
 
 
 
@@ -447,6 +468,25 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Загружаем данные пользователя из БД (в том числе VK ID)
     await load_user_data_from_db(context, user.id)
+    
+    # КРИТИЧЕСКИ ВАЖНО: Проверяем регистрацию перед показом меню!
+    user_data = context.user_data
+    is_registered = (
+        user_data.get("registered") == True and 
+        user_data.get("name") and 
+        user_data.get("gender") and 
+        user_data.get("age") is not None
+    )
+    
+    logger.info("show_main_menu for user %s: registered=%s", user.id, is_registered)
+    
+    if not is_registered:
+        logger.info("User %s not registered in show_main_menu - redirecting to registration", user.id)
+        await update.effective_chat.send_message(
+            "❗ Для доступа к меню необходимо пройти регистрацию.\n\n"
+            "Нажмите /start для начала регистрации."
+        )
+        return
     
     # Получаем все афиши
     all_posters = context.bot_data.get("all_posters", [])
