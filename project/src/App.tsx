@@ -105,12 +105,7 @@ function App() {
               </button>
             </div>
           ) : currentPoster ? (
-            <div 
-              className="px-4 pb-28"
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-            >
+            <div className="px-4 pb-28">
               {/* Индикатор количества афиш */}
               {posters.length > 1 && (
                 <div className="flex justify-center gap-2 mb-4">
@@ -127,8 +122,13 @@ function App() {
                 </div>
               )}
 
-              {/* Фото афиши */}
-              <div className="relative rounded-3xl overflow-hidden shadow-2xl mb-6">
+              {/* Фото афиши с навигацией свайпом */}
+              <div 
+                className="relative rounded-3xl overflow-hidden shadow-2xl mb-6"
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+              >
                 <img
                   src={(() => {
                     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -172,14 +172,19 @@ function App() {
 
         {/* Кнопка билета - показывается для ТЕКУЩЕЙ афиши */}
         {currentPoster?.ticket_url && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent backdrop-blur-sm z-50">
+          <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent backdrop-blur-sm z-[9999] pointer-events-auto">
             <a
               href={currentPoster.ticket_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="block w-full py-4 px-6 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white font-bold text-lg rounded-xl hover:shadow-lg hover:shadow-indigo-500/30 hover:scale-[1.02] active:scale-95 transition-all duration-300 text-center transform-gpu"
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('Кнопка билета нажата! URL:', currentPoster.ticket_url);
+              }}
+              className="block w-full py-4 px-6 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white font-bold text-lg rounded-xl shadow-2xl shadow-indigo-500/50 active:scale-95 transition-all duration-200 text-center cursor-pointer touch-manipulation"
+              style={{ WebkitTapHighlightColor: 'transparent' }}
             >
-              Купить билет
+              🎫 Купить билет
             </a>
           </div>
         )}

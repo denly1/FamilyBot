@@ -209,15 +209,15 @@ export default function Stories() {
             </button>
 
             <div
-              className={`w-full h-full flex flex-col ${isFirstStory ? 'items-start' : 'items-center'} justify-center p-6 sm:p-8 text-white`}
+              className={`w-full h-full flex flex-col ${isFirstStory ? 'items-start' : 'items-center'} justify-center p-3 sm:p-4 text-white`}
             >
               <div
-                className={`w-full max-w-2xl ${isFirstStory ? 'sm:max-w-3xl lg:max-w-5xl' : 'mx-auto'}`}
+                className={`w-full max-w-md ${isFirstStory ? 'sm:max-w-2xl' : 'mx-auto'}`}
               >
                 {currentStory.image && (
                   <div
-                    className={`mb-8 rounded-3xl overflow-hidden border border-white/10 shadow-2xl ${isFirstStory ? '' : 'mx-auto'}`}
-                    style={isFirstStory ? { width: 'min(90vw, 1200px)' } : undefined}
+                    className={`mb-4 rounded-2xl overflow-hidden border border-white/10 shadow-xl ${isFirstStory ? '' : 'mx-auto'}`}
+                    style={isFirstStory ? { width: 'min(85vw, 800px)' } : undefined}
                   >
                     <img
                       src={currentStory.image}
@@ -228,31 +228,25 @@ export default function Stories() {
                   </div>
                 )}
                 {currentStory.content.subtitle && (
-                  <h2 className="text-lg sm:text-xl font-black mb-3 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent drop-shadow-2xl animate-pulse px-2">
+                  <h2 className="text-base sm:text-lg font-bold mb-2 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent px-2">
                     {currentStory.content.subtitle}
                   </h2>
                 )}
                 {currentStory.content.items && currentStory.content.items.length > 0 && (
-                  <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-2 px-2">
+                  <div className="space-y-1.5 max-h-[75vh] overflow-y-auto pr-1 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
                     {currentStory.content.items.map((item, index) => (
                       <div
                         key={index}
-                        className="group relative bg-gradient-to-br from-white/15 via-white/10 to-white/5 backdrop-blur-md rounded-lg p-3 border border-white/30 shadow-xl hover:scale-[1.01] transition-all duration-300"
+                        className="relative bg-white/10 backdrop-blur-sm rounded-lg p-2.5 border border-white/20 shadow-lg"
                       >
-                        {/* Декоративный градиент фон */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-fuchsia-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                        
-                        <div className="relative flex items-start gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gradient-to-br from-cyan-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-xs font-bold text-white shadow-lg">
+                        <div className="flex items-start gap-2">
+                          <span className="flex-shrink-0 w-4 h-4 rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center text-[10px] font-bold text-white">
                             {index + 1}
                           </span>
-                          <p className="text-xs sm:text-sm leading-relaxed text-white/95 font-medium break-words">
+                          <p className="text-[11px] sm:text-xs leading-snug text-white/90 font-normal break-words">
                             {item}
                           </p>
                         </div>
-                        
-                        {/* Декоративный блик */}
-                        <div className="absolute top-0 right-0 w-10 h-10 bg-gradient-to-br from-white/20 to-transparent rounded-full blur-xl opacity-50" />
                       </div>
                     ))}
                   </div>
