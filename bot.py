@@ -1666,8 +1666,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 report = f"🔍 **Проверка подписок для {username_safe}**\n\n"
                 report += f"👤 Telegram ID: `{target_user_id}`\n\n"
                 report += "📺 **Telegram каналы:**\n"
-                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(Largent MSK\\)\n"
-                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(IDN Records\\)\n\n"
+                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(WHAT\\? PARTY\\?\\)\n"
+                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(THE FAMILY\\)\n\n"
                 report += "💬 **Telegram чат:**\n"
                 report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests\\)\n"
                 

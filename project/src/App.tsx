@@ -76,8 +76,6 @@ function App() {
   };
 
   const currentPoster = posters[currentIndex] || null;
-  // Последняя афиша (самая новая) для кнопки билета - первая в массиве т.к. ORDER BY created_at DESC
-  const latestPoster = posters.length > 0 ? posters[0] : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0b1220] via-[#1a1640] to-[#2b0f4f] text-white">
@@ -172,11 +170,11 @@ function App() {
           )}
         </div>
 
-        {/* Кнопка билета - только если есть ссылка у последней афиши */}
-        {latestPoster?.ticket_url && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent backdrop-blur-sm">
+        {/* Кнопка билета - показывается для ТЕКУЩЕЙ афиши */}
+        {currentPoster?.ticket_url && (
+          <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent backdrop-blur-sm z-50">
             <a
-              href={latestPoster.ticket_url}
+              href={currentPoster.ticket_url}
               target="_blank"
               rel="noopener noreferrer"
               className="block w-full py-4 px-6 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white font-bold text-lg rounded-xl hover:shadow-lg hover:shadow-indigo-500/30 hover:scale-[1.02] active:scale-95 transition-all duration-300 text-center transform-gpu"

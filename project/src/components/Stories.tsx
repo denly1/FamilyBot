@@ -228,31 +228,31 @@ export default function Stories() {
                   </div>
                 )}
                 {currentStory.content.subtitle && (
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-4 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent drop-shadow-2xl animate-pulse px-2">
+                  <h2 className="text-lg sm:text-xl font-black mb-3 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent drop-shadow-2xl animate-pulse px-2">
                     {currentStory.content.subtitle}
                   </h2>
                 )}
                 {currentStory.content.items && currentStory.content.items.length > 0 && (
-                  <div className="space-y-2 sm:space-y-3 max-h-[65vh] overflow-y-auto pr-2 px-2">
+                  <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-2 px-2">
                     {currentStory.content.items.map((item, index) => (
                       <div
                         key={index}
-                        className="group relative bg-gradient-to-br from-white/15 via-white/10 to-white/5 backdrop-blur-md rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-white/30 shadow-2xl hover:scale-[1.01] transition-all duration-300 hover:shadow-cyan-500/20"
+                        className="group relative bg-gradient-to-br from-white/15 via-white/10 to-white/5 backdrop-blur-md rounded-lg p-3 border border-white/30 shadow-xl hover:scale-[1.01] transition-all duration-300"
                       >
                         {/* Декоративный градиент фон */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-fuchsia-500/10 rounded-xl sm:rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-fuchsia-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                         
-                        <div className="relative flex items-start gap-2 sm:gap-3">
-                          <span className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-cyan-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-xs sm:text-sm font-bold text-white shadow-lg shadow-cyan-500/50">
+                        <div className="relative flex items-start gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gradient-to-br from-cyan-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-xs font-bold text-white shadow-lg">
                             {index + 1}
                           </span>
-                          <p className="text-xs sm:text-sm md:text-base leading-relaxed text-white/95 font-medium break-words">
+                          <p className="text-xs sm:text-sm leading-relaxed text-white/95 font-medium break-words">
                             {item}
                           </p>
                         </div>
                         
                         {/* Декоративный блик */}
-                        <div className="absolute top-0 right-0 w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-white/20 to-transparent rounded-full blur-xl opacity-50" />
+                        <div className="absolute top-0 right-0 w-10 h-10 bg-gradient-to-br from-white/20 to-transparent rounded-full blur-xl opacity-50" />
                       </div>
                     ))}
                   </div>

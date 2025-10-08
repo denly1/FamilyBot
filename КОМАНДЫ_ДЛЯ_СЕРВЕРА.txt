@@ -1,0 +1,29 @@
+# Скопируйте все команды и выполните на сервере:
+
+ssh root@5.129.250.86
+cd /opt/tusabot
+sudo systemctl stop tusabot tusabot-api tusabot-web
+pkill -f bot.py
+pkill -f api.py
+git reset --hard origin/main
+git pull origin main
+sed -i 's/DB_USER=postgres/DB_USER=tusabot/g' .env
+PGPASSWORD=1 psql -h 127.0.0.1 -p 5432 -U tusabot -d familydb -c "DELETE FROM users; DELETE FROM posters; DELETE FROM attendances;"
+rm -f data/bot_data.pkl bot_data.pkl
+rm -rf project/public/posters/*
+mkdir -p project/public/posters
+source venv/bin/activate
+pip install -r requirements.txt
+python bot.py 2>&1 | tee test_registration.log
+
+# В ДРУГОМ терминале (откройте новое SSH):
+ssh root@5.129.250.86
+cd /opt/tusabot
+tail -f test_registration.log | grep -E "(Bot starting|DB pool|START COMMAND|registered)"
+
+# Теперь напишите боту /start в Telegram
+# Должна появиться регистрация!
+
+# Если регистрация появилась, нажмите Ctrl+C и запустите через systemd:
+sudo systemctl start tusabot tusabot-api tusabot-web
+sudo systemctl status tusabot tusabot-api tusabot-web --no-pager
