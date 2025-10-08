@@ -312,16 +312,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     get_known_users(context).add(user.id)
     
-    # Создаем минимальную запись в БД если её нет
+    # НЕ создаем запись автоматически - только загружаем существующие данные
     pool = get_db_pool(context)
-    if pool:
-        try:
-            await upsert_user(pool, tg_id=user.id, username=user.username)
-        except Exception as e:
-            logger.warning("DB upsert on /start failed: %s", e)
     
     # Загружаем данные пользователя из БД
-    await load_user_data_from_db(context, user.id)
+    if pool:
+        await load_user_data_from_db(context, user.id)
+    else:
+        logger.warning("No DB pool - cannot load user data")
+        context.user_data["registered"] = False
     
     # Проверяем, завершена ли регистрация пользователя более надежно
     user_data = context.user_data
@@ -335,9 +334,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Проверяем незавершенную регистрацию
     has_partial_data = user_data.get("name") or user_data.get("gender") or user_data.get("age") is not None
     
-    logger.info("Start command for user %s: registered=%s, name=%s, gender=%s, age=%s", 
-               user.id, user_data.get("registered"), user_data.get("name"), 
-               user_data.get("gender"), user_data.get("age"))
+    logger.info("=== START COMMAND DEBUG ===")
+    logger.info("User ID: %s", user.id)
+    logger.info("DB Pool exists: %s", pool is not None)
+    logger.info("user_data.registered: %s", user_data.get("registered"))
+    logger.info("user_data.name: %s", user_data.get("name"))
+    logger.info("user_data.gender: %s", user_data.get("gender"))
+    logger.info("user_data.age: %s", user_data.get("age"))
+    logger.info("is_registered: %s", is_registered)
+    logger.info("has_partial_data: %s", has_partial_data)
+    logger.info("=== END DEBUG ===")
     
     if is_registered:
         # Пользователь уже зарегистрирован - показываем сообщение и кнопку меню
@@ -498,13 +504,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if poster.get("ticket_url"):
         action_buttons.append([InlineKeyboardButton("🎫 Купить билет", url=poster["ticket_url"])])
     
-    # 2. Кнопка мини-приложения (веб-приложение)
-    web_app_url = os.getenv("WEB_APP_URL", "https://tusabot.vercel.app")
-    action_buttons.append([InlineKeyboardButton("🌐 Открыть приложение", web_app=WebAppInfo(url=web_app_url))])
-    
-    # 3. Кнопка проверки подписок
-    action_buttons.append([InlineKeyboardButton("✅ Проверить подписки", callback_data="check_all")])
-    
     # Админские кнопки
     if user and user.id in get_admins(context):
         admin_row = []
@@ -588,34 +587,30 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if data == "check_all":
             tg1_ok, tg2_ok, chat_ok = await is_user_subscribed(context, user.id)
 
-            # Формируем сообщение с детальной информацией
-            lines = ["🔍 **Проверка подписок для вашего аккаунта**\n"]
-            lines.append(f"👤 Telegram ID: `{user.id}`\n")
+            # Формируем сообщение с простым форматом
+            lines = ["🔍 **Статус подписок:**\n"]
             
-            lines.append("📺 **Telegram каналы:**")
             # Первый Telegram канал
             tg1_icon = "✅" if tg1_ok else "❌"
             tg1_url = f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            lines.append(f"{tg1_icon} [{CHANNEL_USERNAME}]({tg1_url}) (What? Party?)")
+            lines.append(f"{tg1_icon} [WHAT? PARTY?]({tg1_url})")
             
             # Второй Telegram канал
             tg2_icon = "✅" if tg2_ok else "❌"
             tg2_url = f"https://t.me/{CHANNEL_USERNAME_2.lstrip('@')}"
-            lines.append(f"{tg2_icon} [{CHANNEL_USERNAME_2}]({tg2_url}) (THE FAMILY)")
+            lines.append(f"{tg2_icon} [THE FAMILY]({tg2_url})")
             
-            lines.append("\n💬 **Telegram чат:**")
             # Чат/группа
             chat_icon = "✅" if chat_ok else "❌"
             chat_url = f"https://t.me/{CHAT_USERNAME.lstrip('@')}"
-            lines.append(f"{chat_icon} [{CHAT_USERNAME}]({chat_url}) (Family Guests)")
+            lines.append(f"{chat_icon} [Family Guests 💬]({chat_url})")
             
             # Итоговый статус - нужны все три
             all_ok = tg1_ok and tg2_ok and chat_ok
             if all_ok:
-                lines.append("\n\n🎉 **Все подписки активны!**")
+                lines.append("\n🎉 **Все проверки пройдены!**")
             else:
-                lines.append("\n\n⚠️ **Не все подписки активны**")
-                lines.append("Необходимо подписаться на ВСЕ каналы и чат")
+                lines.append("\n⚠️ **Требуется подписка на все каналы и чат**")
             
             text = "\n".join(lines)
             
@@ -624,11 +619,11 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Кнопки подписки (если не подписан)
             if not tg1_ok:
-                btns.append([InlineKeyboardButton("📢 Подписаться на @whatpartyy", url=tg1_url)])
+                btns.append([InlineKeyboardButton("📢 Подписаться на WHAT? PARTY?", url=tg1_url)])
             if not tg2_ok:
-                btns.append([InlineKeyboardButton("🎉 Подписаться на @thefamilymsk", url=tg2_url)])
+                btns.append([InlineKeyboardButton("🎉 Подписаться на THE FAMILY", url=tg2_url)])
             if not chat_ok:
-                btns.append([InlineKeyboardButton("💬 Вступить в чат @familyychaat", url=chat_url)])
+                btns.append([InlineKeyboardButton("💬 Вступить в чат Family Guests", url=chat_url)])
             
             btns.append([InlineKeyboardButton("🔄 Перепроверить", callback_data="check_all")])
             btns.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")])
@@ -643,8 +638,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 text=text, 
                 reply_markup=InlineKeyboardMarkup(btns), 
                 parse_mode="Markdown"
-            )
-
+                )
+        
         elif data == "show_current_poster":
             # Показать актуальную афишу (последнюю)
             all_posters = context.bot_data.get("all_posters", [])
@@ -777,7 +772,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     else:
                         context.bot_data.pop("poster", None)
                         context.bot_data["all_posters"] = []
-                
+                    
                 caption = poster.get("caption", "Без описания")[:50]
                 remaining = len(context.bot_data.get("all_posters", []))
                 
@@ -1630,14 +1625,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 
                 report = f"🔍 **Проверка подписок для {username_safe}**\n\n"
                 report += f"👤 Telegram ID: `{target_user_id}`\n\n"
-                report += "📺 **Telegram каналы:**\n"
-                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(Largent MSK\\)\n"
-                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(IDN Records\\)\n\n"
-                report += "💬 **Telegram чат:**\n"
-                report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests\\)\n"
+                report += "📺 **Каналы и чат:**\n"
+                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(WHAT\\? PARTY\\?\\)\n"
+                report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(THE FAMILY\\)\n"
+                report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests 💬\\)\n\n"
                 
                 all_ok = tg1_ok and tg2_ok and chat_ok
-                report += f"\n\n{'🎉 **Все подписки активны\\!**' if all_ok else '⚠️ **Не все подписки активны**'}"
+                report += f"\n{'🎉 **Все подписки активны\\!**' if all_ok else '⚠️ **Не все подписки активны**'}"
                 
                 # Кнопки в зависимости от режима
                 if context.user_data.get("continuous_check_mode"):
@@ -1789,7 +1783,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"• Ошибок: {failed_count}"
         )
         return
-    
+
     # Poster draft: expecting photo at step 'photo'
     draft = context.user_data.get("poster_draft")
     if draft and draft.get("step") == "photo" and update.message.photo:
