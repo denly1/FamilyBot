@@ -118,29 +118,26 @@ async def upsert_user(
     name: Optional[str] = None,
     gender: Optional[str] = None,
     age: Optional[int] = None,
-    vk_id: Optional[str] = None,
     username: Optional[str] = None,
 ) -> None:
     async with pool.acquire() as conn:
         try:
-            logger.info("Upserting user %s: name=%s, gender=%s, age=%s, vk_id=%s, username=%s", 
-                       tg_id, name, gender, age, vk_id, username)
+            logger.info("Upserting user %s: name=%s, gender=%s, age=%s, username=%s", 
+                       tg_id, name, gender, age, username)
             await conn.execute(
                 """
-                INSERT INTO users (tg_id, name, gender, age, vk_id, username)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO users (tg_id, name, gender, age, username)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (tg_id) DO UPDATE
                 SET name = COALESCE(EXCLUDED.name, users.name),
                     gender = COALESCE(EXCLUDED.gender, users.gender),
                     age = COALESCE(EXCLUDED.age, users.age),
-                    vk_id = COALESCE(EXCLUDED.vk_id, users.vk_id),
                     username = COALESCE(EXCLUDED.username, users.username);
                 """,
                 tg_id,
                 name,
                 gender,
                 age,
-                vk_id,
                 username,
             )
             logger.info("Successfully upserted user %s", tg_id)
@@ -190,7 +187,6 @@ async def get_user_stats(pool: asyncpg.Pool) -> dict:
         stats = await conn.fetchrow("""
             SELECT 
                 COUNT(*) as total_users,
-                COUNT(vk_id) as users_with_vk,
                 COUNT(CASE WHEN gender = 'male' THEN 1 END) as male_users,
                 COUNT(CASE WHEN gender = 'female' THEN 1 END) as female_users,
                 COUNT(CASE WHEN registered_at >= CURRENT_DATE THEN 1 END) as today_registrations
@@ -213,7 +209,6 @@ async def export_users_to_excel(pool: asyncpg.Pool, filename: str = "users_expor
                     name,
                     gender,
                     age,
-                    vk_id,
                     registered_at,
                     created_at
                 FROM users 
@@ -228,7 +223,7 @@ async def export_users_to_excel(pool: asyncpg.Pool, filename: str = "users_expor
         # Заголовки
         headers = [
             "Telegram ID", "Имя", "Пол", "Возраст", 
-            "VK ID", "Дата регистрации", "Дата создания"
+            "Дата регистрации", "Дата создания"
         ]
         
         # Стилизация заголовков
@@ -252,24 +247,22 @@ async def export_users_to_excel(pool: asyncpg.Pool, filename: str = "users_expor
             ws.cell(row=row_idx, column=3, value=gender_map.get(user['gender'], "Не указано"))
             
             # Возраст
-            age = user['age']
+            age = user.get('age')
             if age:
                 ws.cell(row=row_idx, column=4, value=f"{age} лет")
             else:
                 ws.cell(row=row_idx, column=4, value="Не указано")
             
-            ws.cell(row=row_idx, column=5, value=user['vk_id'] or "Не привязан")
-            
             # Даты
-            if user['registered_at']:
-                ws.cell(row=row_idx, column=6, value=user['registered_at'].strftime("%d.%m.%Y %H:%M"))
+            if user.get('registered_at'):
+                ws.cell(row=row_idx, column=5, value=user['registered_at'].strftime("%d.%m.%Y %H:%M"))
+            else:
+                ws.cell(row=row_idx, column=5, value="Не указано")
+                
+            if user.get('created_at'):
+                ws.cell(row=row_idx, column=6, value=user['created_at'].strftime("%d.%m.%Y %H:%M"))
             else:
                 ws.cell(row=row_idx, column=6, value="Не указано")
-                
-            if user['created_at']:
-                ws.cell(row=row_idx, column=7, value=user['created_at'].strftime("%d.%m.%Y %H:%M"))
-            else:
-                ws.cell(row=row_idx, column=7, value="Не указано")
         
         # Автоподбор ширины колонок
         for column in ws.columns:
