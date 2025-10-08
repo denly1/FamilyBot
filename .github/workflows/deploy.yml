@@ -1,42 +1,26 @@
-name: Deploy to Ubuntu Server
+name: Deploy to Server
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
     - name: Deploy to server
-      uses: appleboy/ssh-action@master
+      uses: appleboy/ssh-action@v0.1.5
       with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
+        host: 5.129.250.86
+        username: root
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 22
         script: |
           cd /opt/tusabot
           git pull origin main
-          
-          sudo systemctl stop tusabot tusabot-api tusabot-web || true
-          
-          source venv/bin/activate
-          pip install -r requirements.txt
-          
-          source .env
-          export PGPASSWORD="${DB_PASSWORD}"
-          psql -h ${DB_HOST} -U ${DB_USER} -d ${DB_NAME} -f migrations/001_initial_schema.sql || true
-          
-          cd project
-          npm install
-          npm run build
-          cd ..
-          
-          sudo systemctl start tusabot tusabot-api tusabot-web
-          echo "✅ Deployment completed!"
+          pkill -f bot.py || true
+          pkill -f api.py || true
+          pip3 install -r requirements.txt
+          python3 bot.py &
+          python3 api.py &
+          echo "✅ Деплой завершен!"
