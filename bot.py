@@ -1987,8 +1987,6 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("broadcast_text", broadcast_text))
     app.add_handler(CommandHandler("broadcast_now", broadcast_now))
     app.add_handler(CallbackQueryHandler(handle_buttons))
-    # Фото с caption /broadcast_text должны обрабатываться раньше обычных фото
-    app.add_handler(MessageHandler(filters.PHOTO & filters.CAPTION_REGEX(r'^/broadcast_text'), broadcast_text))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
