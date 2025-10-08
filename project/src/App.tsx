@@ -79,7 +79,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0b1220] via-[#1a1640] to-[#2b0f4f] text-white">
-      <main className="relative max-w-md mx-auto min-h-screen overflow-hidden">
+      <main className="relative max-w-md mx-auto min-h-screen overflow-hidden" style={{ touchAction: 'pan-y' }}>
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{ backgroundImage: 'url(/фон.jpg)' }}
@@ -172,20 +172,38 @@ function App() {
 
         {/* Кнопка билета - показывается для ТЕКУЩЕЙ афиши */}
         {currentPoster?.ticket_url && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent backdrop-blur-sm z-[9999] pointer-events-auto">
-            <a
-              href={currentPoster.ticket_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log('Кнопка билета нажата! URL:', currentPoster.ticket_url);
-              }}
-              className="block w-full py-4 px-6 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white font-bold text-lg rounded-xl shadow-2xl shadow-indigo-500/50 active:scale-95 transition-all duration-200 text-center cursor-pointer touch-manipulation"
-              style={{ WebkitTapHighlightColor: 'transparent' }}
-            >
-              🎫 Купить билет
-            </a>
+          <div 
+            className="fixed bottom-0 left-0 right-0 p-4 z-[9999]" 
+            style={{ 
+              pointerEvents: 'auto',
+              touchAction: 'auto'
+            }}
+          >
+            <div className="bg-gradient-to-t from-black/95 via-black/80 to-transparent backdrop-blur-md rounded-t-2xl p-4">
+              <a
+                href={currentPoster.ticket_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                  console.log('Touch start на кнопке билета');
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  console.log('Клик по кнопке билета! URL:', currentPoster.ticket_url);
+                  window.open(currentPoster.ticket_url, '_blank');
+                }}
+                className="block w-full py-4 px-6 bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white font-bold text-lg rounded-xl shadow-2xl active:scale-95 transition-transform duration-150 text-center select-none"
+                style={{ 
+                  WebkitTapHighlightColor: 'rgba(59, 130, 246, 0.3)',
+                  touchAction: 'manipulation',
+                  cursor: 'pointer',
+                  userSelect: 'none'
+                }}
+              >
+                🎫 Купить билет
+              </a>
+            </div>
           </div>
         )}
       </main>
