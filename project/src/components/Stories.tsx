@@ -209,15 +209,15 @@ export default function Stories() {
             </button>
 
             <div
-              className={`w-full h-full flex flex-col ${isFirstStory ? 'items-start' : 'items-center'} justify-center p-3 sm:p-4 text-white`}
+              className={`w-full h-full flex flex-col items-center justify-center p-3 sm:p-4 text-white`}
             >
               <div
-                className={`w-full max-w-md ${isFirstStory ? 'sm:max-w-2xl' : 'mx-auto'}`}
+                className={`w-full max-w-md mx-auto`}
               >
                 {currentStory.image && (
                   <div
-                    className={`mb-4 rounded-2xl overflow-hidden border border-white/10 shadow-xl ${isFirstStory ? '' : 'mx-auto'}`}
-                    style={isFirstStory ? { width: 'min(85vw, 800px)' } : undefined}
+                    className={`mb-4 rounded-2xl overflow-hidden border border-white/10 shadow-xl mx-auto`}
+                    style={{ maxWidth: '85vw' }}
                   >
                     <img
                       src={currentStory.image}
@@ -228,22 +228,22 @@ export default function Stories() {
                   </div>
                 )}
                 {currentStory.content.subtitle && (
-                  <h2 className="text-base sm:text-lg font-bold mb-2 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent px-2">
+                  <h2 className="text-xl sm:text-2xl font-bold mb-3 text-center bg-gradient-to-r from-cyan-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent px-2">
                     {currentStory.content.subtitle}
                   </h2>
                 )}
                 {currentStory.content.items && currentStory.content.items.length > 0 && (
-                  <div className="space-y-1.5 max-h-[75vh] overflow-y-auto pr-1 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                  <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-2 px-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
                     {currentStory.content.items.map((item, index) => (
                       <div
                         key={index}
-                        className="relative bg-white/10 backdrop-blur-sm rounded-lg p-2.5 border border-white/20 shadow-lg"
+                        className="relative bg-white/10 backdrop-blur-sm rounded-lg p-3 border border-white/20 shadow-lg"
                       >
-                        <div className="flex items-start gap-2">
-                          <span className="flex-shrink-0 w-4 h-4 rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center text-[10px] font-bold text-white">
+                        <div className="flex items-start gap-2.5">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center text-xs font-bold text-white">
                             {index + 1}
                           </span>
-                          <p className="text-[11px] sm:text-xs leading-snug text-white/90 font-normal break-words">
+                          <p className="text-sm sm:text-base leading-relaxed text-white/95 font-normal break-words">
                             {item}
                           </p>
                         </div>

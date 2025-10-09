@@ -562,6 +562,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             caption += f"\n\n📍 Афиша {current_poster_index + 1} из {len(all_posters)}"
         
         file_id = poster.get("file_id")
+        photo_path = poster.get("photo_path")
         
         # Проверяем что file_id существует
         if not file_id:
@@ -572,7 +573,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
         
-        logger.info("Sending poster with file_id: %s", file_id)
+        logger.info("Sending poster with file_id: %s, photo_path: %s", file_id, photo_path)
         
         # Убираем админскую клавиатуру если была
         keyboard_remove_msg = await update.effective_chat.send_message(
@@ -580,13 +581,44 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=ReplyKeyboardRemove()
         )
         
-        # Отправляем афишу
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=file_id,
-            caption=caption,
-            reply_markup=InlineKeyboardMarkup(all_buttons)
-        )
+        # Пытаемся отправить афишу - сначала с file_id, если не работает - с локального файла
+        photo_sent = False
+        
+        # Попытка 1: Используем Telegram file_id
+        if file_id and not file_id.startswith('/'):
+            try:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=file_id,
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(all_buttons)
+                )
+                photo_sent = True
+                logger.info("Poster sent successfully using file_id")
+            except Exception as e:
+                logger.warning("Failed to send with file_id: %s, trying local file...", e)
+        
+        # Попытка 2: Используем локальный файл если file_id не сработал
+        if not photo_sent and photo_path:
+            try:
+                local_file = Path(__file__).parent / "project" / "public" / photo_path.lstrip("/")
+                if local_file.exists():
+                    with open(local_file, 'rb') as photo_file:
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo_file,
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(all_buttons)
+                        )
+                    photo_sent = True
+                    logger.info("Poster sent successfully using local file: %s", local_file)
+                else:
+                    logger.error("Local file not found: %s", local_file)
+            except Exception as e:
+                logger.error("Failed to send with local file: %s", e)
+        
+        if not photo_sent:
+            raise Exception("Failed to send poster with both file_id and local file")
         
         # Удаляем сообщение "Главное меню" чтобы не дублировать
         try:
