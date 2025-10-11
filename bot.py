@@ -92,7 +92,7 @@ ADMIN_USER_ID_2_STR = _get_env("ADMIN_USER_ID_2", "")
 ADMIN_USER_ID_2 = int(ADMIN_USER_ID_2_STR) if ADMIN_USER_ID_2_STR.isdigit() else 0
 ADMIN_USER_ID_3_STR = _get_env("ADMIN_USER_ID_3", "")
 ADMIN_USER_ID_3 = int(ADMIN_USER_ID_3_STR) if ADMIN_USER_ID_3_STR.isdigit() else 0
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@whatpartyy")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@mediafamm")
 CHANNEL_USERNAME_2 = os.getenv("CHANNEL_USERNAME_2", "@thefamilymsk")
 CHAT_USERNAME = os.getenv("CHAT_USERNAME", "@familyychaat")
 
@@ -665,7 +665,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Первый Telegram канал
             tg1_icon = "✅" if tg1_ok else "❌"
             tg1_url = f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            lines.append(f"{tg1_icon} [WHAT? PARTY?]({tg1_url})")
+            lines.append(f"{tg1_icon} [{CHANNEL_USERNAME}]({tg1_url}) (MEDIA FAM)")
             
             # Второй Telegram канал
             tg2_icon = "✅" if tg2_ok else "❌"
@@ -691,7 +691,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Кнопки подписки (если не подписан)
             if not tg1_ok:
-                btns.append([InlineKeyboardButton("📢 Подписаться на WHAT? PARTY?", url=tg1_url)])
+                btns.append([InlineKeyboardButton("📢 Подписаться на MEDIA FAM", url=tg1_url)])
             if not tg2_ok:
                 btns.append([InlineKeyboardButton("🎉 Подписаться на THE FAMILY", url=tg2_url)])
             if not chat_ok:
@@ -1698,7 +1698,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 report = f"🔍 **Проверка подписок для {username_safe}**\n\n"
                 report += f"👤 Telegram ID: `{target_user_id}`\n\n"
                 report += "📺 **Telegram каналы:**\n"
-                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(WHAT\\? PARTY\\?\\)\n"
+                report += f"{'✅' if tg1_ok else '❌'} {CHANNEL_USERNAME} \\(MEDIA FAM\\)\n"
                 report += f"{'✅' if tg2_ok else '❌'} {CHANNEL_USERNAME_2} \\(THE FAMILY\\)\n\n"
                 report += "💬 **Telegram чат:**\n"
                 report += f"{'✅' if chat_ok else '❌'} {CHAT_USERNAME} \\(Family Guests\\)\n"
