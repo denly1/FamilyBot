@@ -968,13 +968,19 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             elif sub == "broadcast_text":
                 context.user_data["awaiting_broadcast_text"] = True
+                context.user_data["broadcast_button_url"] = None
                 await query.edit_message_text(
                     "📢 **Рассылка всем пользователям**\n\n"
                     "Вы можете отправить:\n"
                     "• 📝 Просто текст\n"
                     "• 🖼 Только фото\n"
                     "• 🖼📝 Фото с текстом (в caption)\n\n"
-                    "Отправьте сообщение следующим сообщением:",
+                    "💡 **Для добавления кнопки со ссылкой:**\n"
+                    "Отправьте текст в формате:\n"
+                    "`Ваш текст | Текст кнопки | https://ссылка`\n\n"
+                    "**Пример:**\n"
+                    "`Новая вечеринка! | Купить билет | https://example.com`\n\n"
+                    "Отправьте сообщение:",
                     parse_mode="Markdown"
                 )
             
@@ -1764,12 +1770,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             # Проверяем что отправлено: текст, фото или фото с текстом
             text_content = update.message.text
             
+            # Парсим формат: "Текст | Текст кнопки | URL"
+            button_markup = None
+            if " | " in text_content:
+                parts = text_content.split(" | ")
+                if len(parts) == 3:
+                    text_content = parts[0].strip()
+                    button_text = parts[1].strip()
+                    button_url = parts[2].strip()
+                    
+                    # Создаем кнопку
+                    if button_text and button_url:
+                        button_markup = InlineKeyboardMarkup([
+                            [InlineKeyboardButton(button_text, url=button_url)]
+                        ])
+                        logger.info("Broadcast with button: text='%s', url='%s'", button_text, button_url)
+            
             success_count = 0
             failed_count = 0
             
             for uid in list(get_known_users(context)):
                 try:
-                    await context.bot.send_message(uid, text_content)
+                    await context.bot.send_message(
+                        uid, 
+                        text_content,
+                        reply_markup=button_markup,
+                        parse_mode="Markdown"
+                    )
                     success_count += 1
                 except Forbidden:
                     logger.info("Cannot message user %s (blocked)", uid)
@@ -1778,10 +1805,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     logger.warning("Broadcast text failed to %s: %s", uid, e)
                     failed_count += 1
             
+            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
             await update.message.reply_text(
                 f"✅ Рассылка завершена!\n"
                 f"• Успешно: {success_count}\n"
-                f"• Ошибок: {failed_count}"
+                f"• Ошибок: {failed_count}{button_info}"
             )
             return
         
@@ -1836,12 +1864,34 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         photo = update.message.photo[-1].file_id
         caption = update.message.caption or ""
         
+        # Парсим формат кнопки в caption: "Текст | Текст кнопки | URL"
+        button_markup = None
+        if " | " in caption:
+            parts = caption.split(" | ")
+            if len(parts) == 3:
+                caption = parts[0].strip()
+                button_text = parts[1].strip()
+                button_url = parts[2].strip()
+                
+                # Создаем кнопку
+                if button_text and button_url:
+                    button_markup = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(button_text, url=button_url)]
+                    ])
+                    logger.info("Broadcast photo with button: text='%s', url='%s'", button_text, button_url)
+        
         success_count = 0
         failed_count = 0
         
         for uid in list(get_known_users(context)):
             try:
-                await context.bot.send_photo(uid, photo=photo, caption=caption)
+                await context.bot.send_photo(
+                    uid, 
+                    photo=photo, 
+                    caption=caption,
+                    reply_markup=button_markup,
+                    parse_mode="Markdown"
+                )
                 success_count += 1
             except Forbidden:
                 logger.info("Cannot message user %s (blocked)", uid)
@@ -1850,10 +1900,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 logger.warning("Broadcast photo failed to %s: %s", uid, e)
                 failed_count += 1
         
+        button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
         await update.message.reply_text(
             f"✅ Рассылка завершена!\n"
             f"• Успешно: {success_count}\n"
-            f"• Ошибок: {failed_count}"
+            f"• Ошибок: {failed_count}{button_info}"
         )
         return
 
