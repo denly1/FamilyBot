@@ -1141,6 +1141,97 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             elif sub == "refresh":
                 # Обновить админ-панель
                 await admin_panel(update, context)
+        
+        elif data == "broadcast:confirm_text":
+            # Подтверждение текстовой рассылки
+            preview = context.user_data.get("broadcast_preview")
+            if not preview or preview.get("type") != "text":
+                await query.edit_message_text("❌ Ошибка: данные рассылки не найдены")
+                return
+            
+            text_content = preview.get("text")
+            entities = preview.get("entities", [])
+            button_markup = preview.get("button_markup")
+            button_text = preview.get("button_text")
+            
+            # Отправляем рассылку
+            success_count = 0
+            failed_count = 0
+            
+            for uid in list(get_known_users(context)):
+                try:
+                    await context.bot.send_message(
+                        uid, 
+                        text_content,
+                        entities=entities,  # Передаём форматирование
+                        reply_markup=button_markup
+                    )
+                    success_count += 1
+                except Forbidden:
+                    logger.info("Cannot message user %s (blocked)", uid)
+                    failed_count += 1
+                except Exception as e:
+                    logger.warning("Broadcast text failed to %s: %s", uid, e)
+                    failed_count += 1
+            
+            # Очищаем данные
+            context.user_data.pop("broadcast_preview", None)
+            
+            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
+            await query.edit_message_text(
+                f"✅ Рассылка завершена!\n"
+                f"• Успешно: {success_count}\n"
+                f"• Ошибок: {failed_count}{button_info}"
+            )
+        
+        elif data == "broadcast:confirm_photo":
+            # Подтверждение фото рассылки
+            preview = context.user_data.get("broadcast_preview")
+            if not preview or preview.get("type") != "photo":
+                await query.edit_message_text("❌ Ошибка: данные рассылки не найдены")
+                return
+            
+            photo = preview.get("photo")
+            caption = preview.get("caption", "")
+            caption_entities = preview.get("caption_entities", [])
+            button_markup = preview.get("button_markup")
+            button_text = preview.get("button_text")
+            
+            # Отправляем рассылку
+            success_count = 0
+            failed_count = 0
+            
+            for uid in list(get_known_users(context)):
+                try:
+                    await context.bot.send_photo(
+                        uid, 
+                        photo=photo, 
+                        caption=caption,
+                        caption_entities=caption_entities,  # Передаём форматирование
+                        reply_markup=button_markup
+                    )
+                    success_count += 1
+                except Forbidden:
+                    logger.info("Cannot message user %s (blocked)", uid)
+                    failed_count += 1
+                except Exception as e:
+                    logger.warning("Broadcast photo failed to %s: %s", uid, e)
+                    failed_count += 1
+            
+            # Очищаем данные
+            context.user_data.pop("broadcast_preview", None)
+            
+            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
+            await query.edit_message_text(
+                f"✅ Рассылка завершена!\n"
+                f"• Успешно: {success_count}\n"
+                f"• Ошибок: {failed_count}{button_info}"
+            )
+        
+        elif data == "broadcast:cancel":
+            # Отмена рассылки
+            context.user_data.pop("broadcast_preview", None)
+            await query.edit_message_text("❌ Рассылка отменена")
     
     except Exception as e:
         logger.exception("handle_buttons failed: %s", e)
@@ -1765,13 +1856,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
             
         if context.user_data.get("awaiting_broadcast_text"):
-            context.user_data["awaiting_broadcast_text"] = False
-            
-            # Проверяем что отправлено: текст, фото или фото с текстом
+            # Сохраняем сообщение для предпросмотра
             text_content = update.message.text
+            entities = update.message.entities or []  # Сохраняем форматирование
             
             # Парсим формат: "Текст | Текст кнопки | URL"
             button_markup = None
+            button_text = None
+            button_url = None
+            
             if " | " in text_content:
                 parts = text_content.split(" | ")
                 if len(parts) == 3:
@@ -1786,30 +1879,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         ])
                         logger.info("Broadcast with button: text='%s', url='%s'", button_text, button_url)
             
-            success_count = 0
-            failed_count = 0
+            # Сохраняем данные для подтверждения
+            context.user_data["broadcast_preview"] = {
+                "text": text_content,
+                "entities": entities,
+                "button_markup": button_markup,
+                "button_text": button_text,
+                "type": "text"
+            }
+            context.user_data["awaiting_broadcast_text"] = False
             
-            for uid in list(get_known_users(context)):
-                try:
-                    await context.bot.send_message(
-                        uid, 
-                        text_content,
-                        reply_markup=button_markup,
-                        parse_mode="Markdown"
-                    )
-                    success_count += 1
-                except Forbidden:
-                    logger.info("Cannot message user %s (blocked)", uid)
-                    failed_count += 1
-                except Exception as e:
-                    logger.warning("Broadcast text failed to %s: %s", uid, e)
-                    failed_count += 1
-            
-            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
+            # Отправляем предпросмотр
             await update.message.reply_text(
-                f"✅ Рассылка завершена!\n"
-                f"• Успешно: {success_count}\n"
-                f"• Ошибок: {failed_count}{button_info}"
+                "📝 Предпросмотр рассылки:"
+            )
+            
+            # Отправляем сообщение с форматированием
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=text_content,
+                entities=entities,  # Передаем форматирование
+                reply_markup=button_markup
+            )
+            
+            # Спрашиваем подтверждение
+            await update.message.reply_text(
+                "✅ Всё верно? Отправить рассылку?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Да, отправить", callback_data="broadcast:confirm_text")],
+                    [InlineKeyboardButton("❌ Нет, отменить", callback_data="broadcast:cancel")]
+                ])
             )
             return
         
@@ -1859,13 +1958,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Проверяем рассылку фото
     if context.user_data.get("awaiting_broadcast_text"):
-        context.user_data["awaiting_broadcast_text"] = False
-        
         photo = update.message.photo[-1].file_id
         caption = update.message.caption or ""
+        caption_entities = update.message.caption_entities or []  # Сохраняем форматирование
         
         # Парсим формат кнопки в caption: "Текст | Текст кнопки | URL"
         button_markup = None
+        button_text = None
+        button_url = None
+        
         if " | " in caption:
             parts = caption.split(" | ")
             if len(parts) == 3:
@@ -1880,31 +1981,38 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     ])
                     logger.info("Broadcast photo with button: text='%s', url='%s'", button_text, button_url)
         
-        success_count = 0
-        failed_count = 0
+        # Сохраняем данные для подтверждения
+        context.user_data["broadcast_preview"] = {
+            "photo": photo,
+            "caption": caption,
+            "caption_entities": caption_entities,
+            "button_markup": button_markup,
+            "button_text": button_text,
+            "type": "photo"
+        }
+        context.user_data["awaiting_broadcast_text"] = False
         
-        for uid in list(get_known_users(context)):
-            try:
-                await context.bot.send_photo(
-                    uid, 
-                    photo=photo, 
-                    caption=caption,
-                    reply_markup=button_markup,
-                    parse_mode="Markdown"
-                )
-                success_count += 1
-            except Forbidden:
-                logger.info("Cannot message user %s (blocked)", uid)
-                failed_count += 1
-            except Exception as e:
-                logger.warning("Broadcast photo failed to %s: %s", uid, e)
-                failed_count += 1
-        
-        button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
+        # Отправляем предпросмотр
         await update.message.reply_text(
-            f"✅ Рассылка завершена!\n"
-            f"• Успешно: {success_count}\n"
-            f"• Ошибок: {failed_count}{button_info}"
+            "📝 Предпросмотр рассылки:"
+        )
+        
+        # Отправляем фото с форматированием
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=photo,
+            caption=caption,
+            caption_entities=caption_entities,  # Передаем форматирование
+            reply_markup=button_markup
+        )
+        
+        # Спрашиваем подтверждение
+        await update.message.reply_text(
+            "✅ Всё верно? Отправить рассылку?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Да, отправить", callback_data="broadcast:confirm_photo")],
+                [InlineKeyboardButton("❌ Нет, отменить", callback_data="broadcast:cancel")]
+            ])
         )
         return
 
@@ -2077,7 +2185,11 @@ def build_app() -> Application:
     app.post_init = _on_startup
     app.post_shutdown = _on_shutdown
 
-    schedule_weekly(app)
+    # ===== АВТОРАССЫЛКА ОТКЛЮЧЕНА =====
+    # Раскомментируйте строку ниже, чтобы включить автоматическую еженедельную рассылку
+    # schedule_weekly(app)
+    # ==================================
+    
     # Notify admin shortly after start
     app.job_queue.run_once(_notify_admin_start, when=1)
     return app
