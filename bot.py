@@ -1857,20 +1857,45 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             
         if context.user_data.get("awaiting_broadcast_text"):
             # Сохраняем сообщение для предпросмотра
-            text_content = update.message.text
-            entities = update.message.entities or []  # Сохраняем форматирование
+            original_text = update.message.text
+            original_entities = update.message.entities or []  # Сохраняем форматирование
             
             # Парсим формат: "Текст | Текст кнопки | URL"
             button_markup = None
             button_text = None
             button_url = None
+            text_content = original_text
+            adjusted_entities = original_entities
             
-            if " | " in text_content:
-                parts = text_content.split(" | ")
+            if " | " in original_text:
+                parts = original_text.split(" | ")
                 if len(parts) == 3:
                     text_content = parts[0].strip()
                     button_text = parts[1].strip()
                     button_url = parts[2].strip()
+                    
+                    # Корректируем entities для обрезанного текста
+                    # Entities указывают на позиции в исходном тексте
+                    # Нужно оставить только те, что относятся к text_content
+                    text_length = len(text_content)
+                    adjusted_entities = []
+                    for entity in original_entities:
+                        # Если entity начинается в пределах text_content
+                        if entity.offset < text_length:
+                            # Обрезаем entity если он выходит за пределы
+                            new_entity = entity
+                            if entity.offset + entity.length > text_length:
+                                # Создаем новый entity с обрезанной длиной
+                                from telegram import MessageEntity
+                                new_entity = MessageEntity(
+                                    type=entity.type,
+                                    offset=entity.offset,
+                                    length=text_length - entity.offset,
+                                    url=entity.url,
+                                    user=entity.user,
+                                    language=entity.language
+                                )
+                            adjusted_entities.append(new_entity)
                     
                     # Создаем кнопку
                     if button_text and button_url:
@@ -1882,7 +1907,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             # Сохраняем данные для подтверждения
             context.user_data["broadcast_preview"] = {
                 "text": text_content,
-                "entities": entities,
+                "entities": adjusted_entities,
                 "button_markup": button_markup,
                 "button_text": button_text,
                 "type": "text"
@@ -1898,7 +1923,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=text_content,
-                entities=entities,  # Передаем форматирование
+                entities=adjusted_entities,  # Передаем скорректированное форматирование
                 reply_markup=button_markup
             )
             
@@ -1959,20 +1984,40 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Проверяем рассылку фото
     if context.user_data.get("awaiting_broadcast_text"):
         photo = update.message.photo[-1].file_id
-        caption = update.message.caption or ""
-        caption_entities = update.message.caption_entities or []  # Сохраняем форматирование
+        original_caption = update.message.caption or ""
+        original_caption_entities = update.message.caption_entities or []  # Сохраняем форматирование
         
         # Парсим формат кнопки в caption: "Текст | Текст кнопки | URL"
         button_markup = None
         button_text = None
         button_url = None
+        caption = original_caption
+        adjusted_caption_entities = original_caption_entities
         
-        if " | " in caption:
-            parts = caption.split(" | ")
+        if " | " in original_caption:
+            parts = original_caption.split(" | ")
             if len(parts) == 3:
                 caption = parts[0].strip()
                 button_text = parts[1].strip()
                 button_url = parts[2].strip()
+                
+                # Корректируем caption_entities для обрезанного текста
+                caption_length = len(caption)
+                adjusted_caption_entities = []
+                for entity in original_caption_entities:
+                    if entity.offset < caption_length:
+                        new_entity = entity
+                        if entity.offset + entity.length > caption_length:
+                            from telegram import MessageEntity
+                            new_entity = MessageEntity(
+                                type=entity.type,
+                                offset=entity.offset,
+                                length=caption_length - entity.offset,
+                                url=entity.url,
+                                user=entity.user,
+                                language=entity.language
+                            )
+                        adjusted_caption_entities.append(new_entity)
                 
                 # Создаем кнопку
                 if button_text and button_url:
@@ -1985,7 +2030,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data["broadcast_preview"] = {
             "photo": photo,
             "caption": caption,
-            "caption_entities": caption_entities,
+            "caption_entities": adjusted_caption_entities,
             "button_markup": button_markup,
             "button_text": button_text,
             "type": "photo"
@@ -2002,7 +2047,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             chat_id=update.effective_chat.id,
             photo=photo,
             caption=caption,
-            caption_entities=caption_entities,  # Передаем форматирование
+            caption_entities=adjusted_caption_entities,  # Передаем скорректированное форматирование
             reply_markup=button_markup
         )
         
