@@ -1861,6 +1861,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             original_entities = update.message.entities or []  # Сохраняем форматирование
             
             # Парсим формат: "Текст | Текст кнопки | URL"
+            # Ищем последние два разделителя " | " с конца, чтобы поддерживать переносы строк в тексте
             button_markup = None
             button_text = None
             button_url = None
@@ -1868,41 +1869,47 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             adjusted_entities = original_entities
             
             if " | " in original_text:
-                parts = original_text.split(" | ")
-                if len(parts) == 3:
-                    text_content = parts[0].strip()
-                    button_text = parts[1].strip()
-                    button_url = parts[2].strip()
+                # Ищем последний разделитель (перед URL)
+                last_separator = original_text.rfind(" | ")
+                if last_separator != -1:
+                    # Ищем предпоследний разделитель (перед текстом кнопки)
+                    second_last_separator = original_text.rfind(" | ", 0, last_separator)
                     
-                    # Корректируем entities для обрезанного текста
-                    # Entities указывают на позиции в исходном тексте
-                    # Нужно оставить только те, что относятся к text_content
-                    text_length = len(text_content)
-                    adjusted_entities = []
-                    for entity in original_entities:
-                        # Если entity начинается в пределах text_content
-                        if entity.offset < text_length:
-                            # Обрезаем entity если он выходит за пределы
-                            new_entity = entity
-                            if entity.offset + entity.length > text_length:
-                                # Создаем новый entity с обрезанной длиной
-                                from telegram import MessageEntity
-                                new_entity = MessageEntity(
-                                    type=entity.type,
-                                    offset=entity.offset,
-                                    length=text_length - entity.offset,
-                                    url=entity.url,
-                                    user=entity.user,
-                                    language=entity.language
-                                )
-                            adjusted_entities.append(new_entity)
-                    
-                    # Создаем кнопку
-                    if button_text and button_url:
-                        button_markup = InlineKeyboardMarkup([
-                            [InlineKeyboardButton(button_text, url=button_url)]
-                        ])
-                        logger.info("Broadcast with button: text='%s', url='%s'", button_text, button_url)
+                    if second_last_separator != -1:
+                        # Нашли оба разделителя - парсим на 3 части
+                        text_content = original_text[:second_last_separator].strip()
+                        button_text = original_text[second_last_separator + 3:last_separator].strip()
+                        button_url = original_text[last_separator + 3:].strip()
+                        
+                        # Корректируем entities для обрезанного текста
+                        # Entities указывают на позиции в исходном тексте
+                        # Нужно оставить только те, что относятся к text_content
+                        text_length = len(text_content)
+                        adjusted_entities = []
+                        for entity in original_entities:
+                            # Если entity начинается в пределах text_content
+                            if entity.offset < text_length:
+                                # Обрезаем entity если он выходит за пределы
+                                new_entity = entity
+                                if entity.offset + entity.length > text_length:
+                                    # Создаем новый entity с обрезанной длиной
+                                    from telegram import MessageEntity
+                                    new_entity = MessageEntity(
+                                        type=entity.type,
+                                        offset=entity.offset,
+                                        length=text_length - entity.offset,
+                                        url=entity.url,
+                                        user=entity.user,
+                                        language=entity.language
+                                    )
+                                adjusted_entities.append(new_entity)
+                        
+                        # Создаем кнопку
+                        if button_text and button_url:
+                            button_markup = InlineKeyboardMarkup([
+                                [InlineKeyboardButton(button_text, url=button_url)]
+                            ])
+                            logger.info("Broadcast with button: text='%s', url='%s'", button_text, button_url)
             
             # Сохраняем данные для подтверждения
             context.user_data["broadcast_preview"] = {
@@ -1988,6 +1995,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         original_caption_entities = update.message.caption_entities or []  # Сохраняем форматирование
         
         # Парсим формат кнопки в caption: "Текст | Текст кнопки | URL"
+        # Ищем последние два разделителя " | " с конца, чтобы поддерживать переносы строк в тексте
         button_markup = None
         button_text = None
         button_url = None
@@ -1995,36 +2003,42 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         adjusted_caption_entities = original_caption_entities
         
         if " | " in original_caption:
-            parts = original_caption.split(" | ")
-            if len(parts) == 3:
-                caption = parts[0].strip()
-                button_text = parts[1].strip()
-                button_url = parts[2].strip()
+            # Ищем последний разделитель (перед URL)
+            last_separator = original_caption.rfind(" | ")
+            if last_separator != -1:
+                # Ищем предпоследний разделитель (перед текстом кнопки)
+                second_last_separator = original_caption.rfind(" | ", 0, last_separator)
                 
-                # Корректируем caption_entities для обрезанного текста
-                caption_length = len(caption)
-                adjusted_caption_entities = []
-                for entity in original_caption_entities:
-                    if entity.offset < caption_length:
-                        new_entity = entity
-                        if entity.offset + entity.length > caption_length:
-                            from telegram import MessageEntity
-                            new_entity = MessageEntity(
-                                type=entity.type,
-                                offset=entity.offset,
-                                length=caption_length - entity.offset,
-                                url=entity.url,
-                                user=entity.user,
-                                language=entity.language
-                            )
-                        adjusted_caption_entities.append(new_entity)
-                
-                # Создаем кнопку
-                if button_text and button_url:
-                    button_markup = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(button_text, url=button_url)]
-                    ])
-                    logger.info("Broadcast photo with button: text='%s', url='%s'", button_text, button_url)
+                if second_last_separator != -1:
+                    # Нашли оба разделителя - парсим на 3 части
+                    caption = original_caption[:second_last_separator].strip()
+                    button_text = original_caption[second_last_separator + 3:last_separator].strip()
+                    button_url = original_caption[last_separator + 3:].strip()
+                    
+                    # Корректируем caption_entities для обрезанного текста
+                    caption_length = len(caption)
+                    adjusted_caption_entities = []
+                    for entity in original_caption_entities:
+                        if entity.offset < caption_length:
+                            new_entity = entity
+                            if entity.offset + entity.length > caption_length:
+                                from telegram import MessageEntity
+                                new_entity = MessageEntity(
+                                    type=entity.type,
+                                    offset=entity.offset,
+                                    length=caption_length - entity.offset,
+                                    url=entity.url,
+                                    user=entity.user,
+                                    language=entity.language
+                                )
+                            adjusted_caption_entities.append(new_entity)
+                    
+                    # Создаем кнопку
+                    if button_text and button_url:
+                        button_markup = InlineKeyboardMarkup([
+                            [InlineKeyboardButton(button_text, url=button_url)]
+                        ])
+                        logger.info("Broadcast photo with button: text='%s', url='%s'", button_text, button_url)
         
         # Сохраняем данные для подтверждения
         context.user_data["broadcast_preview"] = {
