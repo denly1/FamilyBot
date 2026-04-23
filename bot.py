@@ -31,7 +31,7 @@ from telegram import (
     WebAppInfo,
 )
 from telegram.constants import ChatMemberStatus
-from telegram.error import Forbidden
+from telegram.error import Forbidden, RetryAfter, BadRequest, TimedOut, NetworkError, TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -209,6 +209,167 @@ def get_db_pool(context: ContextTypes.DEFAULT_TYPE):
         return context.application.bot_data.get("db_pool")
     except Exception:
         return None
+
+
+# ----------------------
+# Универсальный механизм рассылки
+# ----------------------
+
+# Telegram позволяет ботам ~30 сообщений/сек в сумме по всем чатам.
+# Берём запас и шлём ~25/сек => пауза 0.04 сек. Это главное, что раньше ломало рассылку.
+BROADCAST_DELAY_SEC = 0.04
+# Сколько раз повторять при сетевых сбоях / TimedOut
+BROADCAST_NETWORK_RETRIES = 3
+
+
+async def _safe_send_one(send_callable, uid: int) -> str:
+    """Пытается отправить сообщение одному пользователю.
+
+    Возвращает одно из: 'ok', 'blocked', 'not_found', 'failed'.
+    Сам обрабатывает RetryAfter (ждёт и повторяет) и сетевые сбои.
+    """
+    network_attempts = 0
+    # Защита от бесконечных RetryAfter
+    flood_attempts = 0
+    while True:
+        try:
+            await send_callable(uid)
+            return "ok"
+        except Forbidden:
+            # Пользователь заблокировал бота или удалил чат
+            logger.info("Broadcast: user %s blocked the bot", uid)
+            return "blocked"
+        except RetryAfter as e:
+            flood_attempts += 1
+            wait = float(getattr(e, "retry_after", 1)) + 1.0
+            if flood_attempts > 5:
+                logger.warning("Broadcast: too many RetryAfter for %s, giving up", uid)
+                return "failed"
+            logger.info("Broadcast: flood wait %.1fs for %s", wait, uid)
+            await asyncio.sleep(wait)
+            continue
+        except BadRequest as e:
+            msg = str(e).lower()
+            if (
+                "chat not found" in msg
+                or "user is deactivated" in msg
+                or "peer_id_invalid" in msg
+                or "bot was blocked" in msg
+                or "user not found" in msg
+            ):
+                logger.info("Broadcast: user %s unreachable (%s)", uid, e)
+                return "not_found"
+            logger.warning("Broadcast BadRequest for %s: %s", uid, e)
+            return "failed"
+        except (TimedOut, NetworkError) as e:
+            network_attempts += 1
+            if network_attempts >= BROADCAST_NETWORK_RETRIES:
+                logger.warning("Broadcast: network failure for %s after %d tries: %s",
+                               uid, network_attempts, e)
+                return "failed"
+            await asyncio.sleep(1.5 * network_attempts)
+            continue
+        except TelegramError as e:
+            logger.warning("Broadcast Telegram error for %s: %s", uid, e)
+            return "failed"
+        except Exception as e:
+            logger.warning("Broadcast failed to %s: %s", uid, e)
+            return "failed"
+
+
+async def _collect_broadcast_recipients(context: ContextTypes.DEFAULT_TYPE) -> list[int]:
+    """Возвращает полный актуальный список tg_id получателей.
+
+    Источник правды — БД (таблица users). В дополнение берём in-memory кеш
+    known_users, чтобы не потерять тех, кто только что нажал /start.
+    """
+    ids: Set[int] = set()
+    pool = get_db_pool(context)
+    if pool:
+        try:
+            db_ids = await get_all_user_ids(pool)
+            ids.update(db_ids)
+        except Exception as e:
+            logger.warning("Broadcast: failed to load users from DB: %s", e)
+    ids.update(get_known_users(context))
+    return sorted(ids)
+
+
+async def perform_broadcast(
+    context: ContextTypes.DEFAULT_TYPE,
+    send_callable,
+    *,
+    progress_message=None,
+    progress_every: int = 25,
+) -> dict:
+    """Рассылает сообщение всем пользователям и возвращает подробную статистику.
+
+    send_callable(uid) — корутина, делающая один вызов context.bot.send_* для конкретного uid.
+    progress_message — (опц.) объект Message, который будет периодически обновляться прогрессом.
+    """
+    recipients = await _collect_broadcast_recipients(context)
+    total = len(recipients)
+    stats = {
+        "total": total,
+        "ok": 0,
+        "blocked": 0,
+        "not_found": 0,
+        "failed": 0,
+        "failed_ids": [],
+    }
+    if total == 0:
+        return stats
+
+    known = get_known_users(context)
+    for idx, uid in enumerate(recipients, 1):
+        result = await _safe_send_one(send_callable, uid)
+        stats[result] += 1
+        if result in ("blocked", "not_found"):
+            known.discard(uid)
+        elif result == "failed":
+            stats["failed_ids"].append(uid)
+
+        # Прогресс в админ-сообщении
+        if progress_message is not None and (idx % progress_every == 0 or idx == total):
+            try:
+                await progress_message.edit_text(
+                    f"📤 Рассылка идёт...\n"
+                    f"Обработано: {idx}/{total}\n"
+                    f"✅ Доставлено: {stats['ok']}\n"
+                    f"🚫 Заблокировали бота: {stats['blocked']}\n"
+                    f"🗑 Недоступны: {stats['not_found']}\n"
+                    f"⚠️ Ошибок: {stats['failed']}"
+                )
+            except Exception:
+                pass
+
+        # Защита от флуд-лимита
+        await asyncio.sleep(BROADCAST_DELAY_SEC)
+
+    return stats
+
+
+def format_broadcast_report(stats: dict, *, extra: str = "") -> str:
+    """Человеко-читаемый отчёт по результатам рассылки."""
+    lines = [
+        "✅ **Рассылка завершена**",
+        "",
+        f"👥 Всего получателей: **{stats['total']}**",
+        f"✅ Доставлено: **{stats['ok']}**",
+        f"🚫 Заблокировали бота: **{stats['blocked']}**",
+        f"🗑 Удалены / недоступны: **{stats['not_found']}**",
+        f"⚠️ Ошибок отправки: **{stats['failed']}**",
+    ]
+    failed_ids = stats.get("failed_ids") or []
+    if failed_ids:
+        shown = ", ".join(str(u) for u in failed_ids[:20])
+        more = "" if len(failed_ids) <= 20 else f" и ещё {len(failed_ids) - 20}"
+        lines.append("")
+        lines.append(f"ID с ошибками: `{shown}`{more}")
+    if extra:
+        lines.append("")
+        lines.append(extra)
+    return "\n".join(lines)
 
 
 async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: int):
@@ -921,8 +1082,23 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             
             elif sub == "broadcast_now":
-                await do_weekly_broadcast(context)
-                await query.edit_message_text("Афиша отправлена всем ✅")
+                # Проверяем наличие афиши
+                if not context.bot_data.get("all_posters"):
+                    await query.edit_message_text("❌ Афиш нет. Сначала создайте афишу.")
+                    return
+                await query.edit_message_text("📤 Рассылка афиши запускается...")
+                progress_msg = query.message
+                stats = await do_weekly_broadcast(context, progress_message=progress_msg)
+                if stats is None:
+                    await query.edit_message_text("❌ Нет афиш или получателей")
+                else:
+                    try:
+                        await query.edit_message_text(
+                            format_broadcast_report(stats),
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        await query.edit_message_text(format_broadcast_report(stats))
             
             elif sub == "set_ticket":
                 context.user_data["awaiting_ticket"] = True
@@ -1148,85 +1324,85 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if not preview or preview.get("type") != "text":
                 await query.edit_message_text("❌ Ошибка: данные рассылки не найдены")
                 return
-            
+
             text_content = preview.get("text")
             entities = preview.get("entities", [])
             button_markup = preview.get("button_markup")
             button_text = preview.get("button_text")
-            
-            # Отправляем рассылку
-            success_count = 0
-            failed_count = 0
-            
-            for uid in list(get_known_users(context)):
-                try:
-                    await context.bot.send_message(
-                        uid, 
-                        text_content,
-                        entities=entities,  # Передаём форматирование
-                        reply_markup=button_markup
-                    )
-                    success_count += 1
-                except Forbidden:
-                    logger.info("Cannot message user %s (blocked)", uid)
-                    failed_count += 1
-                except Exception as e:
-                    logger.warning("Broadcast text failed to %s: %s", uid, e)
-                    failed_count += 1
-            
+
+            # Стартовое сообщение о прогрессе
+            await query.edit_message_text("📤 Рассылка запускается...")
+            progress_msg = query.message
+
+            async def _send_text(uid: int):
+                await context.bot.send_message(
+                    uid,
+                    text_content,
+                    entities=entities,
+                    reply_markup=button_markup,
+                )
+
+            stats = await perform_broadcast(
+                context,
+                _send_text,
+                progress_message=progress_msg,
+            )
+
             # Очищаем данные
             context.user_data.pop("broadcast_preview", None)
-            
-            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
-            await query.edit_message_text(
-                f"✅ Рассылка завершена!\n"
-                f"• Успешно: {success_count}\n"
-                f"• Ошибок: {failed_count}{button_info}"
-            )
-        
+
+            extra = f"🔘 С кнопкой: {button_text}" if button_markup else ""
+            try:
+                await query.edit_message_text(
+                    format_broadcast_report(stats, extra=extra),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                # Fallback без Markdown на случай проблем с форматированием
+                await query.edit_message_text(format_broadcast_report(stats, extra=extra))
+
         elif data == "broadcast:confirm_photo":
             # Подтверждение фото рассылки
             preview = context.user_data.get("broadcast_preview")
             if not preview or preview.get("type") != "photo":
                 await query.edit_message_text("❌ Ошибка: данные рассылки не найдены")
                 return
-            
+
             photo = preview.get("photo")
             caption = preview.get("caption", "")
             caption_entities = preview.get("caption_entities", [])
             button_markup = preview.get("button_markup")
             button_text = preview.get("button_text")
-            
-            # Отправляем рассылку
-            success_count = 0
-            failed_count = 0
-            
-            for uid in list(get_known_users(context)):
-                try:
-                    await context.bot.send_photo(
-                        uid, 
-                        photo=photo, 
-                        caption=caption,
-                        caption_entities=caption_entities,  # Передаём форматирование
-                        reply_markup=button_markup
-                    )
-                    success_count += 1
-                except Forbidden:
-                    logger.info("Cannot message user %s (blocked)", uid)
-                    failed_count += 1
-                except Exception as e:
-                    logger.warning("Broadcast photo failed to %s: %s", uid, e)
-                    failed_count += 1
-            
+
+            await query.edit_message_text("📤 Рассылка запускается...")
+            progress_msg = query.message
+
+            async def _send_photo(uid: int):
+                await context.bot.send_photo(
+                    uid,
+                    photo=photo,
+                    caption=caption,
+                    caption_entities=caption_entities,
+                    reply_markup=button_markup,
+                )
+
+            stats = await perform_broadcast(
+                context,
+                _send_photo,
+                progress_message=progress_msg,
+            )
+
             # Очищаем данные
             context.user_data.pop("broadcast_preview", None)
-            
-            button_info = f"\n• С кнопкой: {button_text}" if button_markup else ""
-            await query.edit_message_text(
-                f"✅ Рассылка завершена!\n"
-                f"• Успешно: {success_count}\n"
-                f"• Ошибок: {failed_count}{button_info}"
-            )
+
+            extra = f"🔘 С кнопкой: {button_text}" if button_markup else ""
+            try:
+                await query.edit_message_text(
+                    format_broadcast_report(stats, extra=extra),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                await query.edit_message_text(format_broadcast_report(stats, extra=extra))
         
         elif data == "broadcast:cancel":
             # Отмена рассылки
@@ -1420,8 +1596,21 @@ async def make_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def broadcast_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await admin_only(update, context):
         return
-    await do_weekly_broadcast(context)
-    await update.message.reply_text("Разослал текущую афишу всем известным пользователям ✅")
+    if not context.bot_data.get("all_posters"):
+        await update.message.reply_text("❌ Афиш нет. Сначала создайте афишу.")
+        return
+    progress_msg = await update.message.reply_text("📤 Рассылка афиши запускается...")
+    stats = await do_weekly_broadcast(context, progress_message=progress_msg)
+    if stats is None:
+        await progress_msg.edit_text("❌ Нет афиш или получателей")
+        return
+    try:
+        await progress_msg.edit_text(
+            format_broadcast_report(stats),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        await progress_msg.edit_text(format_broadcast_report(stats))
 
 
 async def broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1469,29 +1658,29 @@ async def broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         caption = update.message.text.partition(' ')[2]
     
-    # Рассылаем
-    success_count = 0
-    failed_count = 0
-    
-    for uid in list(get_known_users(context)):
-        try:
-            if photo:
-                await context.bot.send_photo(uid, photo=photo, caption=caption)
-            else:
-                await context.bot.send_message(uid, caption)
-            success_count += 1
-        except Forbidden:
-            logger.info("Cannot message user %s (blocked)", uid)
-            failed_count += 1
-        except Exception as e:
-            logger.warning("Broadcast failed to %s: %s", uid, e)
-            failed_count += 1
-    
-    await update.message.reply_text(
-        f"✅ Рассылка завершена!\n"
-        f"• Успешно: {success_count}\n"
-        f"• Ошибок: {failed_count}"
+    # Рассылаем через единый helper с rate-limit и обработкой ошибок
+    progress_msg = await update.message.reply_text("📤 Рассылка запускается...")
+
+    if photo:
+        async def _send(uid: int):
+            await context.bot.send_photo(uid, photo=photo, caption=caption)
+    else:
+        async def _send(uid: int):
+            await context.bot.send_message(uid, caption)
+
+    stats = await perform_broadcast(
+        context,
+        _send,
+        progress_message=progress_msg,
     )
+
+    try:
+        await progress_msg.edit_text(
+            format_broadcast_report(stats),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        await progress_msg.edit_text(format_broadcast_report(stats))
 
 
 # ----------------------
@@ -1521,42 +1710,61 @@ async def finalize_previous_week_and_reengage(context: ContextTypes.DEFAULT_TYPE
         context.application.user_data[uid] = ud
 
 
-async def do_weekly_broadcast(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Рассылка афиши всем пользователям бота в личные сообщения (БЕЗ публикации в VK)"""
-    known_users = get_known_users(context)
-    if not known_users:
-        logger.info("No users to broadcast to")
-        return
-    
+async def do_weekly_broadcast(context: ContextTypes.DEFAULT_TYPE, *, progress_message=None) -> Optional[dict]:
+    """Рассылка последней афиши всем пользователям бота в личные сообщения.
+
+    Возвращает словарь статистики (см. perform_broadcast) или None, если
+    нет получателей/афиш.
+    """
     # Получаем последнюю афишу для рассылки
     all_posters = context.bot_data.get("all_posters", [])
     if not all_posters:
         logger.info("No posters to broadcast")
-        return
-    
-    latest_poster = all_posters[-1]
-    
-    # Рассылка в Telegram (только в личные сообщения пользователям)
-    success_count = 0
-    for user_id in known_users:
-        try:
-            await send_poster_to_chat(context, user_id)
-            success_count += 1
-        except Exception as e:
-            logger.warning("Failed to send poster to user %s: %s", user_id, e)
-    
-    logger.info("Broadcast completed: %d/%d users received the poster", 
-                success_count, len(known_users))
-    
-    # Отправляем админу отчет
-    admin_id = ADMIN_USER_ID
-    if admin_id:
-        try:
-            report = f"📊 Рассылка завершена:\n"
-            report += f"✅ Отправлено: {success_count}/{len(known_users)} пользователей"
-            await context.bot.send_message(admin_id, report)
-        except Exception as e:
-            logger.warning("Failed to send broadcast report to admin: %s", e)
+        return None
+
+    poster = all_posters[-1]
+    file_id = poster.get("file_id")
+    caption = poster.get("caption") or ""
+    ticket_url = poster.get("ticket_url")
+    reply_markup = None
+    if ticket_url:
+        reply_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🎫 Купить билет", url=ticket_url)]]
+        )
+
+    async def _send_poster(uid: int):
+        await context.bot.send_photo(
+            chat_id=uid,
+            photo=file_id,
+            caption=caption,
+            reply_markup=reply_markup,
+        )
+
+    stats = await perform_broadcast(
+        context,
+        _send_poster,
+        progress_message=progress_message,
+    )
+
+    logger.info(
+        "Weekly broadcast completed: delivered=%d, blocked=%d, not_found=%d, failed=%d (total=%d)",
+        stats["ok"], stats["blocked"], stats["not_found"], stats["failed"], stats["total"],
+    )
+
+    # Отправляем админу отчёт (если прогресс не шёл в какой-то чат напрямую)
+    if progress_message is None:
+        admin_id = ADMIN_USER_ID
+        if admin_id:
+            try:
+                await context.bot.send_message(
+                    admin_id,
+                    format_broadcast_report(stats),
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning("Failed to send broadcast report to admin: %s", e)
+
+    return stats
 
 
 async def weekly_job(context: CallbackContext) -> None:
