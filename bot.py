@@ -2344,15 +2344,43 @@ def build_app() -> Application:
     # persistence = PicklePersistence(filepath=str(PERSISTENCE_FILE))
     persistence = None
     
-    # Create request with timeout and proxy support
-    request = None
+    # Create request with generous timeouts (дефолт httpx = 5 сек, на медленных
+    # хостингах / при блокировках получаем TimedOut; увеличиваем до 30 сек).
+    # Если задан PROXY_URL — пускаем весь трафик через прокси (HTTP или SOCKS5).
+    _common_kwargs = dict(
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
     if PROXY_URL:
-        from httpx import AsyncClient
-        from telegram.request import HTTPXRequest
-        client = AsyncClient(proxies=PROXY_URL, timeout=30.0)
-        request = HTTPXRequest(http_client=client)
-    
-    app = ApplicationBuilder().token(BOT_TOKEN).persistence(persistence).request(request).build()
+        request = HTTPXRequest(proxy=PROXY_URL, **_common_kwargs)
+        # Для long-polling нужен больший read_timeout
+        get_updates_request = HTTPXRequest(
+            proxy=PROXY_URL,
+            connect_timeout=30.0,
+            read_timeout=40.0,
+            write_timeout=30.0,
+            pool_timeout=10.0,
+        )
+        logger.info("Using proxy: %s", PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL)
+    else:
+        request = HTTPXRequest(**_common_kwargs)
+        get_updates_request = HTTPXRequest(
+            connect_timeout=30.0,
+            read_timeout=40.0,
+            write_timeout=30.0,
+            pool_timeout=10.0,
+        )
+
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .persistence(persistence)
+        .request(request)
+        .get_updates_request(get_updates_request)
+        .build()
+    )
 
     # DB lifecycle
     async def _on_startup(app: Application):
