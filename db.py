@@ -40,7 +40,8 @@ async def init_schema(pool: asyncpg.Pool) -> None:
                 username TEXT,
                 registered_at TIMESTAMPTZ DEFAULT now(),
                 created_at TIMESTAMPTZ DEFAULT now(),
-                updated_at TIMESTAMPTZ DEFAULT now()
+                updated_at TIMESTAMPTZ DEFAULT now(),
+                is_active BOOLEAN DEFAULT true
             );
             """
         )
@@ -72,11 +73,19 @@ async def init_schema(pool: asyncpg.Pool) -> None:
             """
         )
         
+        # Миграция: добавить is_active если ещё не существует
+        await conn.execute(
+            """
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+            """
+        )
+
         # Индексы
         await conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_users_vk_id ON users(vk_id);
             CREATE INDEX IF NOT EXISTS idx_users_registered_at ON users(registered_at);
+            CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
             CREATE INDEX IF NOT EXISTS idx_posters_is_active ON posters(is_active);
             CREATE INDEX IF NOT EXISTS idx_attendances_user_id ON attendances(user_id);
             CREATE INDEX IF NOT EXISTS idx_attendances_poster_id ON attendances(poster_id);
@@ -170,8 +179,19 @@ async def get_user_by_username(pool: asyncpg.Pool, username: str) -> Optional[Di
 
 async def get_all_user_ids(pool: asyncpg.Pool) -> list[int]:
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT tg_id FROM users")
+        rows = await conn.fetch("SELECT tg_id FROM users WHERE is_active = true")
         return [r[0] for r in rows]
+
+
+async def deactivate_users(pool: asyncpg.Pool, tg_ids: list[int]) -> None:
+    """Пометить пользователей как неактивных (заблокировали бота / недоступны)"""
+    if not tg_ids:
+        return
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET is_active = false WHERE tg_id = ANY($1::bigint[])",
+            tg_ids,
+        )
 
 
 async def load_user_vk_data(pool: asyncpg.Pool) -> dict[int, str]:
@@ -186,10 +206,11 @@ async def get_user_stats(pool: asyncpg.Pool) -> dict:
     async with pool.acquire() as conn:
         stats = await conn.fetchrow("""
             SELECT 
-                COUNT(*) as total_users,
-                COUNT(CASE WHEN gender = 'male' THEN 1 END) as male_users,
-                COUNT(CASE WHEN gender = 'female' THEN 1 END) as female_users,
-                COUNT(CASE WHEN registered_at >= CURRENT_DATE THEN 1 END) as today_registrations
+                COUNT(*) FILTER (WHERE is_active = true) as total_users,
+                COUNT(*) as total_all,
+                COUNT(CASE WHEN gender = 'male' AND is_active = true THEN 1 END) as male_users,
+                COUNT(CASE WHEN gender = 'female' AND is_active = true THEN 1 END) as female_users,
+                COUNT(CASE WHEN registered_at >= CURRENT_DATE AND is_active = true THEN 1 END) as today_registrations
             FROM users
         """)
         return dict(stats) if stats else {}

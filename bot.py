@@ -47,7 +47,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 from db import (
     create_pool, init_schema, upsert_user, get_user, get_user_by_username, 
-    get_all_user_ids, get_user_stats, export_users_to_excel,
+    get_all_user_ids, get_user_stats, export_users_to_excel, deactivate_users,
     create_poster, get_active_posters, get_latest_poster, get_poster_by_id,
     deactivate_poster, delete_poster as db_delete_poster, update_poster_ticket_url,
     mark_attendance, get_user_attendances, get_poster_attendances, get_attendance_stats
@@ -321,11 +321,13 @@ async def perform_broadcast(
         return stats
 
     known = get_known_users(context)
+    deactivated_ids: list[int] = []
     for idx, uid in enumerate(recipients, 1):
         result = await _safe_send_one(send_callable, uid)
         stats[result] += 1
         if result in ("blocked", "not_found"):
             known.discard(uid)
+            deactivated_ids.append(uid)
         elif result == "failed":
             stats["failed_ids"].append(uid)
 
@@ -345,6 +347,16 @@ async def perform_broadcast(
 
         # Защита от флуд-лимита
         await asyncio.sleep(BROADCAST_DELAY_SEC)
+
+    # Деактивируем в БД всех, кто заблокировал бота или недоступен
+    if deactivated_ids:
+        pool = get_db_pool(context)
+        if pool:
+            try:
+                await deactivate_users(pool, deactivated_ids)
+                logger.info("Broadcast: deactivated %d users in DB", len(deactivated_ids))
+            except Exception as e:
+                logger.warning("Broadcast: failed to deactivate users: %s", e)
 
     return stats
 
@@ -1532,12 +1544,17 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Статистика пользователей из БД
     status_text += "\n👥 **Пользователи:**\n"
     if stats:
-        status_text += f"• Всего: {stats.get('total_users', 0)}\n"
+        active = stats.get('total_users', 0)
+        total_all = stats.get('total_all', active)
+        inactive = total_all - active
+        status_text += f"• Активных подписчиков: {active}\n"
+        if inactive > 0:
+            status_text += f"• Заблокировали бота: {inactive}\n"
         status_text += f"• Мужчин: {stats.get('male_users', 0)}\n"
         status_text += f"• Женщин: {stats.get('female_users', 0)}\n"
         status_text += f"• Сегодня: {stats.get('today_registrations', 0)}\n"
     else:
-        status_text += f"• Всего: {len(get_known_users(context))}\n"
+        status_text += f"• Активных подписчиков: {len(get_known_users(context))}\n"
     
     # Inline кнопки для удобства
     admin_buttons = [
