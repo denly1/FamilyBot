@@ -1137,9 +1137,13 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 context.user_data["awaiting_new_admin_id"] = True
                 await query.edit_message_text(
                     "➕ **Новый администратор**\n\n"
-                    "Пришлите Telegram ID пользователя (число) или перешлите его сообщение сюда — "
-                    "и он сразу получит доступ к панели администратора.\n\n"
-                    "💡 Узнать свой ID можно командой /id.",
+                    "Пришлите один из вариантов:\n"
+                    "• Telegram ID (число)\n"
+                    "• @username\n"
+                    "• Перешлите сюда его сообщение\n\n"
+                    "И он сразу получит доступ к панели администратора.\n\n"
+                    "💡 Узнать свой ID можно командой /id.\n"
+                    "⚠️ Поиск по @username работает, только если пользователь хотя бы раз запускал бота.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin:manage_admins")]]),
                     parse_mode="Markdown"
                 )
@@ -1657,7 +1661,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Функции, доступные только владельцу
     if owner:
         admin_buttons.append([
-            InlineKeyboardButton("🔍 Проверка по нику", callback_data="admin:check_by_username"),
             InlineKeyboardButton("👥 Пользователи", callback_data="admin:users_count")
         ])
         admin_buttons.append([
@@ -2140,15 +2143,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
             context.user_data["awaiting_new_admin_id"] = False
             target_id = None
+            raw_text = (update.message.text or "").strip()
             if update.message.forward_from:
                 target_id = update.message.forward_from.id
             elif update.message.reply_to_message and update.message.reply_to_message.from_user:
                 target_id = update.message.reply_to_message.from_user.id
-            elif update.message.text and update.message.text.strip().isdigit():
-                target_id = int(update.message.text.strip())
+            elif raw_text.isdigit():
+                target_id = int(raw_text)
+            elif raw_text.startswith("@") or raw_text:
+                username = raw_text.lstrip("@").strip()
+                pool = get_db_pool(context)
+                found_user = await get_user_by_username(pool, username) if pool else None
+                if found_user:
+                    target_id = found_user["tg_id"]
+                else:
+                    await update.message.reply_text(
+                        f"❌ Пользователь @{username} не найден в базе (он должен хотя бы раз запускать бота)."
+                    )
+                    return
             if not target_id:
                 await update.message.reply_text(
-                    "❌ Не удалось определить ID. Пришлите числовой Telegram ID или перешлите сообщение пользователя."
+                    "❌ Не удалось определить пользователя. Пришлите Telegram ID (число), @username "
+                    "или перешлите сообщение пользователя."
                 )
                 return
             if is_owner(target_id):
