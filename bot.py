@@ -1650,7 +1650,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         ],
         # Настройки и рассылки
         [
-            InlineKeyboardButton("✏️ Обновить афишу", callback_data="admin:set_ticket"),
             InlineKeyboardButton("📝 Текстовая рассылка", callback_data="admin:broadcast_text")
         ],
         [
