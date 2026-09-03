@@ -15,12 +15,21 @@ jobs:
         host: 5.129.250.86
         username: root
         key: ${{ secrets.SSH_PRIVATE_KEY }}
+        command_timeout: 5m
         script: |
+          set -e
           cd /opt/tusabot
           git pull origin main
-          pkill -f bot.py || true
-          pkill -f api.py || true
-          pip3 install -r requirements.txt
-          python3 bot.py &
-          python3 api.py &
-          echo "✅ Деплой завершен!"
+          # На случай если кто-то запустил бота вручную в обход systemd — убиваем
+          pkill -f "python.*/opt/tusabot/bot.py" 2>/dev/null || true
+          # Обновляем зависимости в venv (НЕ глобально через pip3)
+          /opt/tusabot/venv/bin/pip install -q -r requirements.txt || true
+          # Перезапуск через systemd, чтобы Restart=always и логи в journalctl работали
+          systemctl restart tusabot
+          systemctl restart tusabot-api 2>/dev/null || true
+          systemctl restart tusabot-web 2>/dev/null || true
+          sleep 8
+          systemctl is-active tusabot
+          echo "===== Последние логи бота ====="
+          journalctl -u tusabot -n 15 --no-pager
+          echo "✅ Деплой завершён"

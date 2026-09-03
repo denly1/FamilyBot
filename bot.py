@@ -50,7 +50,8 @@ from db import (
     get_all_user_ids, get_user_stats, export_users_to_excel, deactivate_users,
     create_poster, get_active_posters, get_latest_poster, get_poster_by_id,
     deactivate_poster, delete_poster as db_delete_poster, update_poster_ticket_url,
-    mark_attendance, get_user_attendances, get_poster_attendances, get_attendance_stats
+    mark_attendance, get_user_attendances, get_poster_attendances, get_attendance_stats,
+    get_admin_ids as db_get_admin_ids, add_admin as db_add_admin, remove_admin as db_remove_admin
 )
 
 # ----------------------
@@ -450,20 +451,59 @@ async def load_user_data_from_db(context: ContextTypes.DEFAULT_TYPE, user_id: in
 
 
 
+# Владельцы бота (задаются в .env) — имеют полный доступ, включая управление ролями
+OWNER_IDS: Set[int] = {i for i in (ADMIN_USER_ID, ADMIN_USER_ID_2, ADMIN_USER_ID_3) if i}
+
+
+def is_owner(user_id: int) -> bool:
+    """Владелец — задаётся только через .env, полный доступ ко всем функциям"""
+    return bool(user_id) and user_id in OWNER_IDS
+
+
 def get_admins(context: ContextTypes.DEFAULT_TYPE) -> Set[int]:
+    """Владельцы (.env) + администраторы, назначенные владельцем (кэш из БД)"""
     bd = context.bot_data
-    if "admins" not in bd:
-        bd["admins"] = set()
-    
-    # Всегда добавляем админов из .env (на случай если добавили новых)
-    if ADMIN_USER_ID:
-        bd["admins"].add(ADMIN_USER_ID)
-    if ADMIN_USER_ID_2:
-        bd["admins"].add(ADMIN_USER_ID_2)
-    if ADMIN_USER_ID_3:
-        bd["admins"].add(ADMIN_USER_ID_3)
-    
-    return bd["admins"]
+    sub_admins: Set[int] = bd.get("sub_admins", set())
+    return OWNER_IDS | sub_admins
+
+
+async def refresh_admins_cache(context_or_app) -> None:
+    """Перезагрузить список администраторов из БД в кэш bot_data"""
+    bot_data = context_or_app.bot_data
+    pool = bot_data.get("db_pool")
+    if not pool:
+        return
+    try:
+        ids = await db_get_admin_ids(pool)
+        bot_data["sub_admins"] = set(ids)
+    except Exception as e:
+        logger.warning("Failed to refresh admins cache: %s", e)
+
+
+def build_manage_admins_view(context: ContextTypes.DEFAULT_TYPE):
+    """Собрать текст и кнопки для экрана управления ролями (только для владельца)"""
+    sub_admins = sorted(context.bot_data.get("sub_admins", set()))
+
+    text = "👑 **Управление ролями**\n\n"
+
+    text += "**Владельцы** _(полный доступ, задаются в .env)_\n"
+    for owner_id in sorted(OWNER_IDS):
+        text += f"• `{owner_id}` 👑\n"
+
+    text += "\n**Администраторы**\n"
+    if sub_admins:
+        for admin_id in sub_admins:
+            text += f"• `{admin_id}` 🛡\n"
+    else:
+        text += "_Пока никого не назначено_\n"
+
+    kb = []
+    for admin_id in sub_admins:
+        kb.append([InlineKeyboardButton(f"❌ Снять {admin_id}", callback_data=f"admin:remove_admin:{admin_id}")])
+    kb.append([InlineKeyboardButton("➕ Добавить администратора", callback_data="admin:add_admin_start")])
+    kb.append([InlineKeyboardButton("◀️ Назад в панель", callback_data="admin:refresh")])
+
+    return text, kb
 
 
 # ----------------------
@@ -1081,6 +1121,44 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await query.edit_message_text("Недостаточно прав.")
                 return
             
+            # Функции, доступные только владельцу
+            owner_only_subs = {"check_by_username", "users_count", "manage_admins", "add_admin_start"}
+            if (sub in owner_only_subs or sub.startswith("remove_admin:")) and not is_owner(user.id):
+                await query.answer("Доступно только владельцу", show_alert=True)
+                return
+            
+            if sub == "manage_admins":
+                context.user_data.pop("awaiting_new_admin_id", None)
+                text, kb = build_manage_admins_view(context)
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+                return
+            
+            elif sub == "add_admin_start":
+                context.user_data["awaiting_new_admin_id"] = True
+                await query.edit_message_text(
+                    "➕ **Новый администратор**\n\n"
+                    "Пришлите Telegram ID пользователя (число) или перешлите его сообщение сюда — "
+                    "и он сразу получит доступ к панели администратора.\n\n"
+                    "💡 Узнать свой ID можно командой /id.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin:manage_admins")]]),
+                    parse_mode="Markdown"
+                )
+                return
+            
+            elif sub.startswith("remove_admin:"):
+                target_id = int(sub.split(":", 1)[1])
+                pool = get_db_pool(context)
+                if pool:
+                    try:
+                        await db_remove_admin(pool, target_id)
+                        await refresh_admins_cache(context)
+                    except Exception as e:
+                        logger.warning("Failed to remove admin %s: %s", target_id, e)
+                await query.answer(f"Администратор {target_id} снят ✅")
+                text, kb = build_manage_admins_view(context)
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+                return
+            
             if sub == "create_poster":
                 # init draft
                 ud = context.user_data
@@ -1507,12 +1585,10 @@ async def delete_poster(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отобразить улучшенную админ-панель с inline кнопками."""
     user = update.effective_user
-    admins = get_admins(context)
-    if not admins and user:
-        admins.add(user.id)
-    if not user or user.id not in admins:
+    if not user or user.id not in get_admins(context):
         await update.effective_chat.send_message("Эта команда доступна только администратору.")
         return
+    owner = is_owner(user.id)
     
     # Получаем статистику из БД
     pool = get_db_pool(context)
@@ -1527,7 +1603,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     all_posters = context.bot_data.get("all_posters", [])
     current_poster = context.bot_data.get("poster")
     
-    status_text = "🛠 **Админ-панель TusaBot**\n\n"
+    status_text = "🛠 **Админ-панель TusaBot**\n"
+    status_text += ("👑 Роль: Владелец\n\n" if owner else "🛡 Роль: Администратор\n\n")
     
     # Статистика афиш
     status_text += "📊 **Афиши:**\n"
@@ -1556,7 +1633,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         status_text += f"• Активных подписчиков: {len(get_known_users(context))}\n"
     
-    # Inline кнопки для удобства
+    # Inline кнопки: базовый набор доступен и владельцу, и администратору
     admin_buttons = [
         # Управление афишами
         [
@@ -1569,45 +1646,31 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         ],
         # Настройки и рассылки
         [
-            InlineKeyboardButton("🔗 Задать ссылку", callback_data="admin:set_ticket"),
+            InlineKeyboardButton("✏️ Обновить афишу", callback_data="admin:set_ticket"),
             InlineKeyboardButton("📝 Текстовая рассылка", callback_data="admin:broadcast_text")
         ],
-        # Пользователи
         [
-            InlineKeyboardButton("🔍 Проверка по нику", callback_data="admin:check_by_username"),
             InlineKeyboardButton("🔄 Обновить", callback_data="admin:refresh")
         ],
-        [
-            InlineKeyboardButton("👥 Пользователи", callback_data="admin:users_count")
-        ],
-        # Выход
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")]
     ]
+    
+    # Функции, доступные только владельцу
+    if owner:
+        admin_buttons.append([
+            InlineKeyboardButton("🔍 Проверка по нику", callback_data="admin:check_by_username"),
+            InlineKeyboardButton("👥 Пользователи", callback_data="admin:users_count")
+        ])
+        admin_buttons.append([
+            InlineKeyboardButton("👑 Управление админами", callback_data="admin:manage_admins")
+        ])
+    
+    admin_buttons.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")])
     
     await update.effective_chat.send_message(
         status_text, 
         reply_markup=InlineKeyboardMarkup(admin_buttons),
         parse_mode="Markdown"
     )
-
-
-async def make_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Добавить администратора: /make_admin <user_id> или в ответ на сообщ. пользователя."""
-    user = update.effective_user
-    if not user or user.id not in get_admins(context):
-        await update.effective_chat.send_message("Эта команда доступна только администратору.")
-        return
-    target_id = None
-    if context.args and context.args[0].isdigit():
-        target_id = int(context.args[0])
-    elif update.message and update.message.reply_to_message and update.message.reply_to_message.from_user:
-        target_id = update.message.reply_to_message.from_user.id
-    if not target_id:
-        await update.effective_chat.send_message("Укажи ID: /make_admin <user_id> или ответь на его сообщение.")
-        return
-    admins = get_admins(context)
-    admins.add(target_id)
-    await update.effective_chat.send_message(f"Пользователь {target_id} добавлен в администраторы ✅")
 
 
 async def broadcast_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2071,6 +2134,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Админские команды теперь только через inline кнопки в админ-панели
         # Оставляем только обработку ввода данных
         # Handle admin text inputs
+        if context.user_data.get("awaiting_new_admin_id"):
+            if not is_owner(user.id):
+                context.user_data["awaiting_new_admin_id"] = False
+                return
+            context.user_data["awaiting_new_admin_id"] = False
+            target_id = None
+            if update.message.forward_from:
+                target_id = update.message.forward_from.id
+            elif update.message.reply_to_message and update.message.reply_to_message.from_user:
+                target_id = update.message.reply_to_message.from_user.id
+            elif update.message.text and update.message.text.strip().isdigit():
+                target_id = int(update.message.text.strip())
+            if not target_id:
+                await update.message.reply_text(
+                    "❌ Не удалось определить ID. Пришлите числовой Telegram ID или перешлите сообщение пользователя."
+                )
+                return
+            if is_owner(target_id):
+                await update.message.reply_text("Этот пользователь уже владелец бота.")
+                return
+            pool = get_db_pool(context)
+            if pool:
+                try:
+                    await db_add_admin(pool, target_id, user.id)
+                    await refresh_admins_cache(context)
+                except Exception as e:
+                    logger.warning("Failed to add admin %s: %s", target_id, e)
+                    await update.message.reply_text(f"❌ Не удалось назначить администратора: {e}")
+                    return
+            text, kb = build_manage_admins_view(context)
+            await update.message.reply_text(
+                f"✅ Пользователь {target_id} назначен администратором!\n\n{text}",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode="Markdown"
+            )
+            return
+        
         if context.user_data.get("awaiting_ticket"):
             context.user_data["awaiting_ticket"] = False
             url = update.message.text.strip()
@@ -2405,6 +2505,9 @@ def build_app() -> Application:
             pool = await create_pool()
             await init_schema(pool)
             app.bot_data["db_pool"] = pool
+            
+            # Загружаем администраторов, назначенных владельцем
+            await refresh_admins_cache(app)
             
             # Загружаем существующих пользователей из БД
             user_ids = await get_all_user_ids(pool)

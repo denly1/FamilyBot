@@ -72,6 +72,17 @@ async def init_schema(pool: asyncpg.Pool) -> None:
             );
             """
         )
+
+        # Таблица администраторов (роль "администратор", назначаемая владельцем)
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admins (
+                tg_id BIGINT PRIMARY KEY,
+                added_by BIGINT,
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+            """
+        )
         
         # Миграция: добавить is_active если ещё не существует
         await conn.execute(
@@ -504,3 +515,33 @@ async def get_attendance_stats(pool: asyncpg.Pool, poster_id: int) -> dict:
             poster_id
         )
         return dict(stats) if stats else {}
+
+
+# ----------------------
+# Роль "администратор" (назначается владельцем, хранится в БД)
+# ----------------------
+
+async def get_admin_ids(pool: asyncpg.Pool) -> list[int]:
+    """Получить список tg_id всех администраторов, назначенных владельцем"""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT tg_id FROM admins")
+        return [row["tg_id"] for row in rows]
+
+
+async def add_admin(pool: asyncpg.Pool, tg_id: int, added_by: int) -> None:
+    """Назначить пользователя администратором"""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO admins (tg_id, added_by)
+            VALUES ($1, $2)
+            ON CONFLICT (tg_id) DO NOTHING
+            """,
+            tg_id, added_by
+        )
+
+
+async def remove_admin(pool: asyncpg.Pool, tg_id: int) -> None:
+    """Снять роль администратора с пользователя"""
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM admins WHERE tg_id = $1", tg_id)
